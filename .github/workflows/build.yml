@@ -124,8 +124,10 @@ jobs:
           path: build/BreeferComposer-macOS-arm64.dmg
 
   release:
+    # Only Linux and macOS are published. They are built by CI but have never been run
+    # on real hardware by the maintainers, so the release is flagged as a pre-release.
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [windows, linux, macos]
+    needs: [linux, macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -133,7 +135,30 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: dist
+      - name: Name the files so the status is obvious
+        run: |
+          mkdir -p release
+          cp dist/breefer-linux/*.AppImage "release/BreeferComposer-${GITHUB_REF_NAME}-linux-x86_64-UNTESTED.AppImage"
+          cp dist/breefer-macos/*.dmg "release/BreeferComposer-${GITHUB_REF_NAME}-macos-arm64-UNTESTED.dmg"
+          ls -l release
       - uses: softprops/action-gh-release@v2
         with:
-          files: dist/**/*
+          name: "Breefer Composer ${{ github.ref_name }} (Linux & macOS - NOT TESTED)"
+          prerelease: true
+          files: release/*
           generate_release_notes: true
+          body: |
+            ## Not tested
+
+            The Linux AppImage and macOS DMG attached here were **built automatically by GitHub
+            Actions and have not been run or tested on real hardware**. The unit tests ran in CI
+            (headless), but the GUI, playback, audio and export have only been checked on Windows.
+            Expect rough edges and please report problems at
+            https://github.com/shineakhanda/breefer-composer/issues.
+
+            - **Linux** (x86-64): `chmod +x` the AppImage and run it. Needs a desktop with OpenGL-free X11/Wayland (XWayland is fine).
+            - **macOS** (Apple Silicon): the app is **unsigned and not notarized**. Open the DMG, drag the app to
+              Applications, then right-click > Open the first time (or run
+              `xattr -dr com.apple.quarantine "/Applications/Breefer Composer.app"`).
+              The macOS build uses Homebrew's FFmpeg, which is GPL-licensed.
+            - Windows builds are produced by CI but are not part of this release.

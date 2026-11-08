@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 project(BreeferComposer VERSION 0.3.0 LANGUAGES C CXX
         DESCRIPTION "Free, open-source non-linear video editor"
-        HOMEPAGE_URL "https://github.com/breefer/breefer-composer")
+        HOMEPAGE_URL "https://github.com/shineakhanda/breefer-composer")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

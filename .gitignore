@@ -10,3 +10,5 @@ dist/
 AppDir/
 *.AppImage
 tests/data/*.png
+tests/data/features.bcproj
+tests/data/*.png

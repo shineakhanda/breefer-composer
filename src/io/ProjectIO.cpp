@@ -1,6 +1,8 @@
 #include "io/ProjectIO.h"
 
+#include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -407,6 +409,22 @@ bool loadProject(const QString& path, Project& out, QString* error)
 
     for (const auto& v : root["bins"].toArray()) p.bins << v.toString();
     for (const auto& v : root["media"].toArray()) p.media.push_back(mediaFromJson(v.toObject()));
+
+    // Make projects portable: relative media paths are relative to the project
+    // file, and a missing absolute path is retried next to the project (the usual
+    // result of copying a project folder to another machine).
+    const QDir projectDir = QFileInfo(path).absoluteDir();
+    for (auto& m : p.media) {
+        if (m.path.isEmpty()) continue;
+        if (QFileInfo(m.path).isRelative()) {
+            m.path = QDir::cleanPath(projectDir.absoluteFilePath(m.path));
+        } else if (!QFileInfo::exists(m.path)) {
+            const QString beside = projectDir.filePath(QFileInfo(m.path).fileName());
+            if (QFileInfo::exists(beside)) m.path = beside;
+        }
+        // Proxies are per-machine cache files: drop stale ones, they are regenerated.
+        if (!m.proxyPath.isEmpty() && !QFileInfo::exists(m.proxyPath)) m.proxyPath.clear();
+    }
     for (const auto& v : root["sequences"].toArray()) p.sequences.push_back(sequenceFromJson(v.toObject()));
 
     // v1 projects had no A/V links: link video/audio clips cut from the same

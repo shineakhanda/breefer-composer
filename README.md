@@ -6,7 +6,7 @@ Premiere Pro-style workflow, built to stay fast on modest hardware — down to
 
 ![Breefer Composer](docs/screenshot.png)
 
-[![Build](https://github.com/breefer/breefer-composer/actions/workflows/build.yml/badge.svg)](.github/workflows/build.yml)
+[![Build](https://github.com/shineakhanda/breefer-composer/actions/workflows/build.yml/badge.svg)](https://github.com/shineakhanda/breefer-composer/actions/workflows/build.yml)
 Licence: GPL-3.0-or-later · C++20 · Qt 6 · FFmpeg
 
 ---
@@ -68,8 +68,16 @@ i3/i5 2nd–4th gen: 1/4 playback, proxies above 720p, no timeline thumbnails.
 
 ## Download
 
-Pre-built packages are produced by GitHub Actions for every push and attached to each
-[release](https://github.com/breefer/breefer-composer/releases): Windows installer/ZIP, Linux AppImage, macOS DMG (Apple Silicon).
+Packages are built by GitHub Actions on every push. Tagged versions publish a **pre-release**
+with:
+
+| Platform | File | Status |
+|---|---|---|
+| Linux x86-64 | `BreeferComposer-<version>-linux-x86_64-UNTESTED.AppImage` | **built by CI, not run on real hardware** |
+| macOS (Apple Silicon) | `BreeferComposer-<version>-macos-arm64-UNTESTED.dmg` | **built by CI, not run on real hardware; unsigned** |
+
+Windows installer/ZIP builds are produced as CI artifacts (Windows is the only platform
+tested by hand). See the [releases page](https://github.com/shineakhanda/breefer-composer/releases).
 
 ## Building from source
 

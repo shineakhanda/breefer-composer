@@ -510,6 +510,26 @@ int main(int argc, char** argv)
         if (nv1 >= 0 && nested.tracks[nv1].clips.size() == 2) CHECK_EQ(nested.tracks[nv1].clips[1].start, frames(50));
     });
 
+    test("project media paths are portable", [] {
+        QTemporaryDir dir;
+        QFile beside(dir.filePath(QStringLiteral("moved.mp4")));   // exists beside the project
+        CHECK(beside.open(QIODevice::WriteOnly));
+        beside.close();
+        Project p;
+        p.id = QStringLiteral("p");
+        MediaRef rel;  rel.id = QStringLiteral("m1"); rel.path = QStringLiteral("clips/a.mp4"); rel.name = QStringLiteral("a");
+        MediaRef moved; moved.id = QStringLiteral("m2"); moved.path = QStringLiteral("D:/gone/elsewhere/moved.mp4"); moved.name = QStringLiteral("m");
+        p.media = {rel, moved};
+        p.sequences.push_back(makeDefaultSequence());
+        const QString file = dir.filePath(QStringLiteral("t.bcproj"));
+        QString error;
+        CHECK(io::saveProject(p, file, &error));
+        Project q;
+        CHECK(io::loadProject(file, q, &error));
+        CHECK(q.media[0].path == QDir::cleanPath(dir.filePath(QStringLiteral("clips/a.mp4"))));
+        CHECK(q.media[1].path == QDir::cleanPath(dir.filePath(QStringLiteral("moved.mp4"))));
+    });
+
     test("gzip/DEFLATE decoder handles stored, fixed and dynamic blocks", [] {
         // Fixed-Huffman stream for "hello hello hello" (zlib level 1 output, no header).
         const QByteArray fixed = QByteArray::fromHex("cb48cdc9c957c8409000");
