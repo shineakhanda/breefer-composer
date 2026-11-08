@@ -49,8 +49,15 @@ jobs:
         run: |
           $env:PATH = "$(Join-Path $env:IQTA_TOOLS 'mingw1310_64/bin');$env:PATH"
           cd build
-          cpack -G ZIP
-          cpack -G NSIS
+          foreach ($gen in @("ZIP", "NSIS")) {
+            $out = cpack -G $gen 2>&1 | Out-String
+            Write-Host $out
+            if ($LASTEXITCODE -ne 0) {
+              $lines = ($out -split "`n" | Where-Object { $_ -match "rror|not found|fail" } | Select-Object -First 8)
+              foreach ($l in $lines) { Write-Host ("::error title=cpack $gen failed::" + $l.Trim().Replace("%", "%25")) }
+              exit 1
+            }
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: breefer-windows
@@ -110,13 +117,14 @@ jobs:
           cache: true
       - name: Build
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DFFMPEG_ROOT=/nonexistent
-          cmake --build build
+          chmod +x .github/scripts/run_logged.sh
+          .github/scripts/run_logged.sh "configure" cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DFFMPEG_ROOT=/nonexistent
+          .github/scripts/run_logged.sh "build" cmake --build build
       - name: Test
-        run: QT_QPA_PLATFORM=offscreen ./build/breefer_tests
+        run: QT_QPA_PLATFORM=offscreen .github/scripts/run_logged.sh "tests" ./build/breefer_tests
       - name: Bundle
         run: |
-          macdeployqt "build/Breefer Composer.app" -dmg
+          .github/scripts/run_logged.sh "macdeployqt" macdeployqt "build/Breefer Composer.app" -dmg
           mv "build/Breefer Composer.dmg" "build/BreeferComposer-macOS-arm64.dmg"
       - uses: actions/upload-artifact@v4
         with:

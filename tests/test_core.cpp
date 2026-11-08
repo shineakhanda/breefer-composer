@@ -518,7 +518,7 @@ int main(int argc, char** argv)
         Project p;
         p.id = QStringLiteral("p");
         MediaRef rel;  rel.id = QStringLiteral("m1"); rel.path = QStringLiteral("clips/a.mp4"); rel.name = QStringLiteral("a");
-        MediaRef moved; moved.id = QStringLiteral("m2"); moved.path = QStringLiteral("D:/gone/elsewhere/moved.mp4"); moved.name = QStringLiteral("m");
+        MediaRef moved; moved.id = QStringLiteral("m2"); moved.path = QDir::rootPath() + QStringLiteral("gone/elsewhere/moved.mp4");   // absolute on every OS moved.name = QStringLiteral("m");
         p.media = {rel, moved};
         p.sequences.push_back(makeDefaultSequence());
         const QString file = dir.filePath(QStringLiteral("t.bcproj"));
