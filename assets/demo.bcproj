@@ -1,0 +1,180 @@
+{
+    "format": "breefer-project",
+    "id": "proj_4c91c0a1-f",
+    "media": [
+        {
+            "channels": 1,
+            "codec": "mpeg4",
+            "duration": 1270080000000,
+            "hasAudio": true,
+            "hasVideo": true,
+            "height": 720,
+            "id": "media_f78648c3-e",
+            "name": "demo.mp4",
+            "path": "demo.mp4",
+            "proxyPath": "",
+            "rateDen": 1,
+            "rateNum": 25,
+            "sampleRate": 48000,
+            "width": 1280
+        }
+    ],
+    "name": "Demo",
+    "sequences": [
+        {
+            "height": 720,
+            "id": "seq_7aa32e33-1",
+            "name": "Demo Sequence",
+            "rateDen": 1,
+            "rateNum": 25,
+            "tracks": [
+                {
+                    "clips": [
+                    ],
+                    "id": "vt_112e0f8f-e",
+                    "kind": "video",
+                    "locked": false,
+                    "muted": false,
+                    "name": "V3"
+                },
+                {
+                    "clips": [
+                        {
+                            "duration": 508032000000,
+                            "effects": [
+                                {
+                                    "enabled": true,
+                                    "id": "fx_63e771d6-2",
+                                    "name": "Opacity",
+                                    "params": [
+                                        {
+                                            "id": "amount",
+                                            "keys": [
+                                            ],
+                                            "max": 1,
+                                            "min": 0,
+                                            "name": "Opacity",
+                                            "value": 1
+                                        }
+                                    ],
+                                    "type": "opacity"
+                                }
+                            ],
+                            "id": "clip_71da13e1-b",
+                            "label": "demo.mp4",
+                            "mediaId": "media_f78648c3-e",
+                            "muted": false,
+                            "sourceIn": 254016000000,
+                            "speed": 1,
+                            "start": 254016000000
+                        }
+                    ],
+                    "id": "vt_327eec01-f",
+                    "kind": "video",
+                    "locked": false,
+                    "muted": false,
+                    "name": "V2"
+                },
+                {
+                    "clips": [
+                        {
+                            "duration": 635040000000,
+                            "effects": [
+                                {
+                                    "enabled": true,
+                                    "id": "fx_58efba77-b",
+                                    "name": "Opacity",
+                                    "params": [
+                                        {
+                                            "id": "amount",
+                                            "keys": [
+                                            ],
+                                            "max": 1,
+                                            "min": 0,
+                                            "name": "Opacity",
+                                            "value": 1
+                                        }
+                                    ],
+                                    "type": "opacity"
+                                }
+                            ],
+                            "id": "clip_f94cb560-a",
+                            "label": "demo.mp4",
+                            "mediaId": "media_f78648c3-e",
+                            "muted": false,
+                            "sourceIn": 0,
+                            "speed": 1,
+                            "start": 0
+                        },
+                        {
+                            "duration": 635040000000,
+                            "effects": [
+                                {
+                                    "enabled": true,
+                                    "id": "fx_47f38318-e",
+                                    "name": "Opacity",
+                                    "params": [
+                                        {
+                                            "id": "amount",
+                                            "keys": [
+                                            ],
+                                            "max": 1,
+                                            "min": 0,
+                                            "name": "Opacity",
+                                            "value": 1
+                                        }
+                                    ],
+                                    "type": "opacity"
+                                }
+                            ],
+                            "id": "clip_eba4aff8-3",
+                            "label": "demo.mp4",
+                            "mediaId": "media_f78648c3-e",
+                            "muted": false,
+                            "sourceIn": 635040000000,
+                            "speed": 1,
+                            "start": 635040000000
+                        }
+                    ],
+                    "id": "vt_5bacc8c2-8",
+                    "kind": "video",
+                    "locked": false,
+                    "muted": false,
+                    "name": "V1"
+                },
+                {
+                    "clips": [
+                        {
+                            "duration": 1270080000000,
+                            "effects": [
+                            ],
+                            "id": "clip_dd350300-e",
+                            "label": "demo.mp4",
+                            "mediaId": "media_f78648c3-e",
+                            "muted": false,
+                            "sourceIn": 0,
+                            "speed": 1,
+                            "start": 0
+                        }
+                    ],
+                    "id": "at_1e20f53c-f",
+                    "kind": "audio",
+                    "locked": false,
+                    "muted": false,
+                    "name": "A1"
+                },
+                {
+                    "clips": [
+                    ],
+                    "id": "at_29974685-c",
+                    "kind": "audio",
+                    "locked": false,
+                    "muted": false,
+                    "name": "A2"
+                }
+            ],
+            "width": 1280
+        }
+    ],
+    "version": 1
+}

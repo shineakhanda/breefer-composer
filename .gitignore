@@ -1,0 +1,8 @@
+build/
+build-*/
+.toolchain/
+.cache/
+*.user
+*.bcproj.bak
+Thumbs.db
+.DS_Store
