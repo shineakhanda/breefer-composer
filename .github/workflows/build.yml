@@ -44,6 +44,11 @@ jobs:
         run: |
           $env:PATH = "$(Join-Path $env:IQTA_TOOLS 'mingw1310_64/bin');$env:QT_ROOT_DIR/bin;$env:PATH"
           ./build/breefer_tests.exe
+      - name: Install NSIS (installer builder)
+        shell: pwsh
+        run: |
+          choco install nsis -y --no-progress
+          "C:\Program Files (x86)\NSIS" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
       - name: Package
         shell: pwsh
         run: |
