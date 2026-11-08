@@ -140,7 +140,7 @@ jobs:
     # Only Linux and macOS are published. They are built by CI but have never been run
     # on real hardware by the maintainers, so the release is flagged as a pre-release.
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [linux, macos]
+    needs: [windows, linux, macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -153,6 +153,8 @@ jobs:
           mkdir -p release
           cp dist/breefer-linux/*.AppImage "release/BreeferComposer-${GITHUB_REF_NAME}-linux-x86_64-UNTESTED.AppImage"
           cp dist/breefer-macos/*.dmg "release/BreeferComposer-${GITHUB_REF_NAME}-macos-arm64-UNTESTED.dmg"
+          cp dist/breefer-windows/*.exe "release/BreeferComposer-${GITHUB_REF_NAME}-windows-x64-setup.exe"
+          cp dist/breefer-windows/*.zip "release/BreeferComposer-${GITHUB_REF_NAME}-windows-x64-portable.zip"
           ls -l release
       - uses: softprops/action-gh-release@v2
         with:
@@ -174,4 +176,5 @@ jobs:
               Applications, then right-click > Open the first time (or run
               `xattr -dr com.apple.quarantine "/Applications/Breefer Composer.app"`).
               The macOS build uses Homebrew's FFmpeg, which is GPL-licensed.
-            - Windows builds are produced by CI but are not part of this release.
+            - **Windows** (x64): the installer (`-setup.exe`) and portable `.zip` are the platform the
+              maintainers develop on, but they are also built by CI and not formally release-tested.
