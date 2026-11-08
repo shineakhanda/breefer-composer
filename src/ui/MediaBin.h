@@ -34,12 +34,17 @@ signals:
     void newSequenceRequested();
     void newTitleRequested();
     void newColorMatteRequested();
+    void newAdjustmentRequested();
+    void newModelRequested();
+    void newRemotionRequested();
+    void rerenderRequested(const QString& mediaId);
     void sequenceActivated(const QString& sequenceId);
     void statusMessage(const QString& message);
 
 public slots:
     void importFiles();
     void importFolder();
+    void removeSelected();
     void refresh();
 
 private:
@@ -55,6 +60,9 @@ private:
     bool m_refreshQueued = false;
     QHash<QString, QIcon> m_icons;
     bool m_iconMode = true;
+    QString m_currentBin;            // folder shown ("" = project root)
+    QStringList childBins(const QString& parent) const;
+    void newBin();
 };
 
 } // namespace bc

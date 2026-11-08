@@ -1,6 +1,12 @@
 #include "ui/Dialogs.h"
 
+#include "media/RemotionBridge.h"
 #include "ui/Theme.h"
+
+#include <QApplication>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QSettings>
 
 #include <QCheckBox>
 #include <QColorDialog>
@@ -503,6 +509,134 @@ Exporter::Settings ExportDialog::settings() const
     s.label = QStringLiteral("%1 -> %2").arg(m_seq.name, QFileInfo(s.outputPath).fileName());
     return s;
 }
+
+// ------------------------------------------------------------ RemotionDialog
+
+RemotionDialog::RemotionDialog(QWidget* parent)
+    : QDialog(parent)
+{
+    setWindowTitle(tr("Remotion / React Composition"));
+    setMinimumWidth(560);
+    auto* layout = new QVBoxLayout(this);
+    auto* intro = new QLabel(tr("Use a Remotion project, a pre-built Remotion bundle, or a React plugin "
+                                "(package.json with a \"breefer\" section). It renders with your props as "
+                                "ProRes 4444 with alpha and lands on the timeline as a clip you can re-render."), this);
+    intro->setWordWrap(true);
+    intro->setStyleSheet(QStringLiteral("color: #9b9b9b;"));
+    layout->addWidget(intro);
+
+    auto* form = new QFormLayout;
+    auto* projectRow = new QHBoxLayout;
+    QSettings settings(QStringLiteral("Breefer"), QStringLiteral("Composer"));
+    m_project = new QLineEdit(settings.value(QStringLiteral("remotionProject")).toString(), this);
+    auto* browse = new QPushButton(tr("Browse..."), this);
+    projectRow->addWidget(m_project, 1);
+    projectRow->addWidget(browse);
+    form->addRow(tr("Project / bundle"), projectRow);
+    m_entry = new QLineEdit(this);
+    m_entry->setPlaceholderText(tr("auto (remotion.config) or e.g. src/index.ts"));
+    form->addRow(tr("Entry point"), m_entry);
+    auto* compRow = new QHBoxLayout;
+    m_composition = new QComboBox(this);
+    m_composition->setEditable(true);
+    auto* list = new QPushButton(tr("List"), this);
+    compRow->addWidget(m_composition, 1);
+    compRow->addWidget(list);
+    form->addRow(tr("Composition"), compRow);
+    m_props = new QPlainTextEdit(QStringLiteral("{}"), this);
+    m_props->setFont(theme::monoFont(9));
+    m_props->setMaximumHeight(120);
+    form->addRow(tr("Props (JSON)"), m_props);
+    layout->addLayout(form);
+    m_status = new QLabel(this);
+    m_status->setWordWrap(true);
+    m_status->setStyleSheet(QStringLiteral("color: #9b9b9b;"));
+    layout->addWidget(m_status);
+
+    auto* buttons = new QDialogButtonBox(this);
+    QPushButton* render = buttons->addButton(tr("Render && Import"), QDialogButtonBox::AcceptRole);
+    QPushButton* studio = buttons->addButton(tr("Open Remotion Studio"), QDialogButtonBox::ActionRole);
+    buttons->addButton(QDialogButtonBox::Cancel);
+    render->setDefault(true);
+    connect(render, &QPushButton::clicked, this, [this] {
+        const QJsonParseError err = [&] { QJsonParseError e{}; QJsonDocument::fromJson(m_props->toPlainText().toUtf8(), &e); return e; }();
+        if (!m_props->toPlainText().trimmed().isEmpty() && err.error != QJsonParseError::NoError) {
+            m_status->setText(tr("Props are not valid JSON: %1").arg(err.errorString()));
+            return;
+        }
+        if (composition().isEmpty()) {
+            m_status->setText(tr("Choose a composition (press List)."));
+            return;
+        }
+        QSettings(QStringLiteral("Breefer"), QStringLiteral("Composer")).setValue(QStringLiteral("remotionProject"), project());
+        accept();
+    });
+    connect(studio, &QPushButton::clicked, this, [this] {
+        m_studio = true;
+        accept();
+    });
+    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+    layout->addWidget(buttons);
+
+    connect(browse, &QPushButton::clicked, this, [this] {
+        const QString dir = QFileDialog::getExistingDirectory(this, tr("Remotion project or bundle"), m_project->text());
+        if (!dir.isEmpty()) {
+            m_project->setText(dir);
+            detect();
+        }
+    });
+    connect(list, &QPushButton::clicked, this, &RemotionDialog::refreshCompositions);
+    if (!m_project->text().isEmpty()) detect();
+    if (RemotionBridge::npxExecutable().isEmpty())
+        m_status->setText(tr("Node.js was not found on PATH. Install Node.js 18 or newer (nodejs.org) to render Remotion compositions."));
+}
+
+void RemotionDialog::detect()
+{
+    QString kind;
+    if (!RemotionBridge::isRemotionFolder(project(), &kind)) {
+        m_status->setText(tr("This folder has no Remotion dependency and is not a Remotion bundle."));
+        return;
+    }
+    if (kind == QLatin1String("react-plugin")) {
+        // React plugin manifest: { "breefer": { "composition", "entry", "defaultProps" } }
+        QFile pkg(QDir(project()).filePath(QStringLiteral("package.json")));
+        if (pkg.open(QIODevice::ReadOnly)) {
+            const QJsonObject b = QJsonDocument::fromJson(pkg.readAll()).object().value(QStringLiteral("breefer")).toObject();
+            if (b.contains(QStringLiteral("entry"))) m_entry->setText(b.value(QStringLiteral("entry")).toString());
+            if (b.contains(QStringLiteral("composition"))) m_composition->setEditText(b.value(QStringLiteral("composition")).toString());
+            if (b.contains(QStringLiteral("defaultProps")))
+                m_props->setPlainText(QString::fromUtf8(QJsonDocument(b.value(QStringLiteral("defaultProps")).toObject()).toJson()));
+        }
+    }
+    m_status->setText(kind == QLatin1String("bundle") ? tr("Pre-built Remotion bundle detected (React binary plugin).")
+                      : kind == QLatin1String("react-plugin") ? tr("Breefer React plugin detected.")
+                                                              : tr("Remotion project detected. Press List to load compositions."));
+}
+
+void RemotionDialog::refreshCompositions()
+{
+    m_status->setText(tr("Asking Remotion for compositions..."));
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    RemotionBridge bridge;
+    QString error;
+    const QStringList ids = bridge.listCompositions(project(), entry(), &error);
+    QApplication::restoreOverrideCursor();
+    if (ids.isEmpty()) {
+        m_status->setText(error.isEmpty() ? tr("No compositions found.") : error.left(600));
+        return;
+    }
+    const QString keep = m_composition->currentText();
+    m_composition->clear();
+    m_composition->addItems(ids);
+    if (ids.contains(keep)) m_composition->setCurrentText(keep);
+    m_status->setText(tr("%n composition(s) found.", nullptr, ids.size()));
+}
+
+QString RemotionDialog::project() const { return m_project->text().trimmed(); }
+QString RemotionDialog::entry() const { return m_entry->text().trimmed(); }
+QString RemotionDialog::composition() const { return m_composition->currentText().trimmed(); }
+QString RemotionDialog::props() const { return m_props->toPlainText().trimmed(); }
 
 // ------------------------------------------------------------ ShortcutsDialog
 

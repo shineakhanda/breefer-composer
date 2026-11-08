@@ -17,6 +17,8 @@ inline constexpr const char* kCrop = "crop";
 inline constexpr const char* kFlip = "flip";
 inline constexpr const char* kVignette = "vignette";
 inline constexpr const char* kVolume = "volume";
+inline constexpr const char* kBasic3D = "basic3d";
+inline constexpr const char* kModel3D = "model3d";
 
 EffectInstance makeMotion();
 EffectInstance makeOpacity();
@@ -28,6 +30,8 @@ EffectInstance makeCrop();
 EffectInstance makeFlip();
 EffectInstance makeVignette();
 EffectInstance makeVolume();
+EffectInstance makeBasic3D();
+EffectInstance makeModel3D();
 
 // Factory by type id; returns false for unknown types.
 bool makeByType(const QString& type, EffectInstance& out);

@@ -2,6 +2,8 @@
 
 #include "core/Evaluate.h"
 #include "engine/Effects.h"
+#include "engine/Model3D.h"
+#include "engine/PluginHost.h"
 
 #include <QFontMetricsF>
 #include <QPainter>
@@ -194,26 +196,42 @@ void Compositor::drawClip(QPainter& painter, const Sequence& seq, const QVector<
         QPainter tp(&frame);
         drawTitle(tp, seq, clip);
         drawSize = frame.size();
+    } else if (clip.generator == GeneratorKind::Nest) {
+        // Nested sequence: render it (transparent background) at our canvas size.
+        const Sequence* nested = nullptr;
+        for (const auto& candidate : m_library)
+            if (candidate.id == clip.nestedSequenceId) nested = &candidate;
+        if (!nested || m_nestDepth >= 4) return;
+        ++m_nestDepth;
+        frame = renderCanvas(*nested, media, std::max<Tick>(0, clip.sourceTime(time)), false);
+        --m_nestDepth;
+        drawSize = frame.size();
+    } else if (clip.generator == GeneratorKind::Model3D) {
+        const auto mesh = Mesh::load(clip.modelPath);
+        RenderParams3D p;
+        auto v = [&](const char* id, double fallback) { return fx::paramValue(clip, fx::kModel3D, id, local, fallback); };
+        p.rotateX = v("rotateX", p.rotateX);
+        p.rotateY = v("rotateY", p.rotateY);
+        p.rotateZ = v("rotateZ", p.rotateZ);
+        p.scale = v("scale", p.scale);
+        p.distance = v("distance", p.distance);
+        p.fov = v("fov", p.fov);
+        p.lightAzimuth = v("lightAzimuth", p.lightAzimuth);
+        p.lightElevation = v("lightElevation", p.lightElevation);
+        p.ambient = v("ambient", p.ambient);
+        p.color = QColor(static_cast<int>(v("red", 200)), static_cast<int>(v("green", 200)), static_cast<int>(v("blue", 210)));
+        p.wireframe = v("wireframe", 0.0) >= 0.5;
+        frame = renderMesh(*mesh, p, m_width, m_height);
+        drawSize = frame.size();
+    } else if (clip.generator == GeneratorKind::Adjustment) {
+        return;   // handled in renderCanvas (needs the layers beneath)
     } else {
         frame = sourceImage(seq, media, clip, time, drawSize);
         if (frame.isNull()) return;
-        // Cached frames are shared; effects below must work on a private copy.
         // QImage copy-on-write detaches on the first pixel write; untouched frames stay shared.
     }
 
-    fx::applyColor(frame, clip, local);
-
-    const double blurRadius = fx::paramValue(clip, fx::kBlur, "radius", local, 0.0) * s * 1.8;
-    if (blurRadius > 0.5) fx::applyBlur(frame, blurRadius);
-
-    const double sharpen = fx::paramValue(clip, fx::kSharpen, "amount", local, 0.0);
-    if (sharpen > 0.0) fx::applySharpen(frame, sharpen);
-
-    const double vignette = fx::paramValue(clip, fx::kVignette, "amount", local, 0.0);
-    if (vignette > 0.0)
-        fx::applyVignette(frame, vignette, fx::paramValue(clip, fx::kVignette, "size", local, 60.0));
-
-    fx::applyCropFlip(frame, clip, local);
+    applyPixelEffects(frame, clip, local, s);
 
     const QPointF topLeft(-drawSize.width() * 0.5, -drawSize.height() * 0.5);
     const bool smooth = m_highQuality || std::abs(transform.scale - 1.0) > 1e-3
@@ -224,6 +242,20 @@ void Compositor::drawClip(QPainter& painter, const Sequence& seq, const QVector<
         painter.setRenderHint(QPainter::SmoothPixmapTransform, smooth);
         painter.setOpacity(opacity);
         painter.translate(m_width * 0.5 + transform.x, m_height * 0.5 + transform.y);
+        // Basic 3D: true perspective swivel/tilt around the layer centre.
+        const double swivel = fx::paramValue(clip, fx::kBasic3D, "swivel", local, 0.0);
+        const double tilt = fx::paramValue(clip, fx::kBasic3D, "tilt", local, 0.0);
+        const double distance = fx::paramValue(clip, fx::kBasic3D, "distance", local, 0.0);
+        if (std::abs(swivel) > 1e-3 || std::abs(tilt) > 1e-3 || std::abs(distance) > 1e-3) {
+            const double plane = m_width * 1.6;
+            QTransform t3;
+            t3.rotate(tilt, Qt::XAxis, plane);
+            t3.rotate(swivel, Qt::YAxis, plane);
+            const double depthScale = plane / std::max(1.0, plane + distance / 100.0 * plane);
+            t3.scale(depthScale, depthScale);
+            painter.setTransform(t3, true);
+            painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+        }
         painter.rotate(transform.rotation);
         painter.scale(transform.scale, transform.scale);
         painter.drawImage(topLeft, frame);
@@ -295,10 +327,36 @@ QImage Compositor::renderLayer(const Sequence& seq, const QVector<MediaRef>& med
     return layer;
 }
 
+void Compositor::applyPixelEffects(QImage& frame, const Clip& clip, Tick local, double s)
+{
+    fx::applyColor(frame, clip, local);
+
+    const double blurRadius = fx::paramValue(clip, fx::kBlur, "radius", local, 0.0) * s * 1.8;
+    if (blurRadius > 0.5) fx::applyBlur(frame, blurRadius);
+
+    const double sharpen = fx::paramValue(clip, fx::kSharpen, "amount", local, 0.0);
+    if (sharpen > 0.0) fx::applySharpen(frame, sharpen);
+
+    const double vignette = fx::paramValue(clip, fx::kVignette, "amount", local, 0.0);
+    if (vignette > 0.0)
+        fx::applyVignette(frame, vignette, fx::paramValue(clip, fx::kVignette, "size", local, 60.0));
+
+    // Native plugin effects, in stack order.
+    for (const auto& e : clip.effects)
+        if (e.enabled && e.type.startsWith(QLatin1String("plugin:"))) PluginHost::instance().render(e, frame, local);
+
+    fx::applyCropFlip(frame, clip, local);
+}
+
 QImage Compositor::render(const Sequence& seq, const QVector<MediaRef>& media, Tick time)
 {
+    return renderCanvas(seq, media, time, true);
+}
+
+QImage Compositor::renderCanvas(const Sequence& seq, const QVector<MediaRef>& media, Tick time, bool opaque)
+{
     QImage canvas(m_width, m_height, QImage::Format_ARGB32_Premultiplied);
-    canvas.fill(Qt::black);
+    canvas.fill(opaque ? Qt::black : Qt::transparent);
 
     QPainter painter(&canvas);
 
@@ -313,6 +371,20 @@ QImage Compositor::render(const Sequence& seq, const QVector<MediaRef>& media, T
         if (!ev.isTransition()) {
             const Clip& clip = *ev.clip;
             if (!clip.enabled) continue;
+            if (clip.generator == GeneratorKind::Adjustment) {
+                // Adjustment layer: re-process everything composited so far,
+                // blended over the original by the layer's opacity.
+                const Tick local = time - clip.start;
+                QImage processed = canvas.copy();
+                applyPixelEffects(processed, clip, local, static_cast<double>(m_width) / std::max(1, seq.width));
+                const double opacity = std::clamp(
+                    fx::paramValue(clip, fx::kOpacity, "amount", local, 100.0) / 100.0 * ev.fade, 0.0, 1.0);
+                painter.save();
+                painter.setOpacity(opacity);
+                painter.drawImage(0, 0, processed);
+                painter.restore();
+                continue;
+            }
             const bool dipWhite = ev.fadeType == TransitionType::DipToWhite && ev.fade < 1.0;
             drawClip(painter, seq, media, clip, time, dipWhite ? 1.0 : ev.fade);
             if (dipWhite) {

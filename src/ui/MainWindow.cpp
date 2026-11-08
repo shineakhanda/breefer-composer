@@ -9,6 +9,8 @@
 #include "media/Exporter.h"
 #include "media/MediaProbe.h"
 #include "media/ProxyManager.h"
+#include "media/RemotionBridge.h"
+#include "engine/PluginHost.h"
 #include "ui/AudioMeters.h"
 #include "ui/ColorPanels.h"
 #include "ui/Dialogs.h"
@@ -33,7 +35,17 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QAbstractItemView>
+#include <QAbstractSpinBox>
 #include <QCursor>
+#include <QDesktopServices>
+#include <QJsonObject>
+#include <QListWidget>
+#include <QUrl>
+#include "engine/Model3D.h"
+#include "media/ThumbnailCache.h"
+#include <QKeyEvent>
+#include <QPlainTextEdit>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
@@ -141,6 +153,12 @@ MainWindow::MainWindow(QWidget* parent)
         setWindowState(Qt::WindowMaximized);
     }
     setPlaybackDivisor(m_playbackDivisor);
+    {
+        // Old dual/quad-thread CPUs (Core i3/i5 2nd-4th gen) start in low-end mode.
+        const QVariant stored = settings.value(QStringLiteral("lowEndMode"));
+        const bool lowEnd = stored.isValid() ? stored.toBool() : QThread::idealThreadCount() <= 4;
+        if (lowEnd) applyLowEndMode(true);
+    }
     {
         const int frames = settings.value(QStringLiteral("defaultTransitionFrames"), 25).toInt();
         m_timeline->setDefaultTransitionFrames(frames);
@@ -519,7 +537,29 @@ QAction* MainWindow::action(const QString& text, const QKeySequence& shortcut, c
         a->setShortcut(shortcut);
         a->setShortcutContext(Qt::WindowShortcut);
     }
-    connect(a, &QAction::triggered, this, [fn] { fn(); });
+    // Navigation keys belong to lists, text fields and spin boxes when they have
+    // focus; only plain editing keys are re-routed, everything else is global.
+    const bool navigationKey = shortcut.count() == 1
+        && QList<int>{Qt::Key_Left, Qt::Key_Right, Qt::Key_Up, Qt::Key_Down, Qt::Key_Home, Qt::Key_End,
+                      Qt::Key_Delete, Qt::Key_Space}.contains(shortcut[0].key())
+        && shortcut[0].keyboardModifiers() == Qt::NoModifier;
+    connect(a, &QAction::triggered, this, [this, fn, navigationKey, shortcut] {
+        QWidget* focus = QApplication::focusWidget();
+        if (navigationKey && focus
+            && (qobject_cast<QAbstractItemView*>(focus) || qobject_cast<QLineEdit*>(focus)
+                || qobject_cast<QAbstractSpinBox*>(focus) || qobject_cast<QPlainTextEdit*>(focus)
+                || qobject_cast<QComboBox*>(focus))) {
+            const int key = shortcut[0].key();
+            if (key == Qt::Key_Delete && m_mediaBin->isAncestorOf(focus)) {
+                m_mediaBin->removeSelected();
+                return;
+            }
+            QKeyEvent press(QEvent::KeyPress, key, Qt::NoModifier, key == Qt::Key_Space ? QStringLiteral(" ") : QString());
+            QApplication::sendEvent(focus, &press);
+            return;
+        }
+        fn();
+    });
     addAction(a);
     if (menu) menu->addAction(a);
     return a;
@@ -603,11 +643,15 @@ void MainWindow::buildMenus()
     file->addSeparator();
     action(tr("&Import..."), QKeySequence(QStringLiteral("Ctrl+I")), [this] { m_mediaBin->importFiles(); }, file);
     action(tr("Import &Folder..."), {}, [this] { m_mediaBin->importFolder(); }, file);
-    action(tr("Import &Timeline (OTIO / FCP7 XML / EDL)..."), {}, [this] { importInterchange(); }, file);
+    action(tr("Import Premiere Pro &Project / Timeline (.prproj, XML, OTIO, EDL)..."), QKeySequence(QStringLiteral("Ctrl+Alt+I")),
+           [this] { importInterchange(); }, file);
     file->addSeparator();
     QMenu* newMenu = file->addMenu(tr("Ne&w"));
     action(tr("Title..."), QKeySequence(QStringLiteral("Ctrl+T")), [this] { newTitle(); }, newMenu);
     action(tr("Color Matte..."), {}, [this] { newColorMatte(); }, newMenu);
+    action(tr("Adjustment Layer"), {}, [this] { newAdjustmentLayer(); }, newMenu);
+    action(tr("3D Model (OBJ)..."), {}, [this] { newModel3D(); }, newMenu);
+    action(tr("Remotion / React Composition..."), QKeySequence(QStringLiteral("Ctrl+Alt+R")), [this] { newRemotion(); }, newMenu);
     QMenu* exportMenu = file->addMenu(tr("&Export"));
     action(tr("&Media..."), QKeySequence(QStringLiteral("Ctrl+M")), [this] { showExportDialog(); }, exportMenu);
     action(tr("&Frame..."), QKeySequence(QStringLiteral("Ctrl+Shift+E")), [this] { exportFrame(); }, exportMenu);
@@ -638,6 +682,7 @@ void MainWindow::buildMenus()
     action(tr("&Deselect All"), QKeySequence(QStringLiteral("Ctrl+Shift+A")), [this] { m_timeline->deselectAll(); }, editMenu);
     editMenu->addSeparator();
     action(tr("&Keyboard Shortcuts..."), QKeySequence(QStringLiteral("Ctrl+Alt+K")), [this] { ShortcutsDialog(this).exec(); }, editMenu);
+    action(tr("P&lugins..."), {}, [this] { showPluginManager(); }, editMenu);
     action(tr("Pr&eferences..."), QKeySequence(QStringLiteral("Ctrl+,")), [this] { showPreferences(); }, editMenu);
 
     // ---------------------------------------------------------------- Clip
@@ -664,6 +709,7 @@ void MainWindow::buildMenus()
     action(tr("&Unlink"), {}, [this] { m_timeline->unlinkSelection(); }, clip);
     clip->addSeparator();
     action(tr("Edit &Title..."), {}, [this] { editTitle(m_document->selectedClipId()); }, clip);
+    action(tr("&Nest..."), {}, [this] { m_timeline->nestSelection(); }, clip);
     action(tr("Nudge Left"), QKeySequence(QStringLiteral("Alt+Left")), [this] { m_timeline->nudge(-1); }, clip);
     action(tr("Nudge Right"), QKeySequence(QStringLiteral("Alt+Right")), [this] { m_timeline->nudge(1); }, clip);
     action(tr("Nudge Up a Track"), QKeySequence(QStringLiteral("Alt+Up")), [this] { m_timeline->nudgeLane(1); }, clip);
@@ -898,12 +944,27 @@ void MainWindow::wire()
         if (c && !c->isGenerator()) setSourceMedia(c->mediaId, c->sourceIn);
     });
     connect(m_timeline, &TimelineWidget::titleEditRequested, this, &MainWindow::editTitle);
+    connect(m_timeline, &TimelineWidget::openSequenceRequested, this, [this](const QString& id) {
+        pauseProgram();
+        m_document->setSequence(id);
+        QTimer::singleShot(0, m_timeline, &TimelineWidget::zoomToFit);
+    });
     connect(m_timeline, &TimelineWidget::mediaDropped, this,
             [this](const QStringList& ids, Tick at, int track, bool insert) {
                 placeMedia(ids, at, track, insert ? edit::PlaceMode::Insert : edit::PlaceMode::Overwrite);
             });
     connect(m_timeline, &TimelineWidget::filesDropped, this,
-            [this](const QStringList& paths, Tick at, int track, bool insert) {
+            [this](const QStringList& dropped, Tick at, int track, bool insert) {
+                QStringList paths;
+                for (const QString& p : dropped) {
+                    const QString ext = QFileInfo(p).suffix().toLower();
+                    if (ext == QLatin1String("prproj") || ext == QLatin1String("otio") || ext == QLatin1String("edl")
+                        || ext == QLatin1String("xml"))
+                        importInterchangeFile(p);
+                    else
+                        paths << p;
+                }
+                if (paths.isEmpty()) return;
                 QStringList failures;
                 const QStringList ids = m_mediaBin->importPaths(paths, &failures);
                 if (!ids.isEmpty()) placeMedia(ids, at, track, insert ? edit::PlaceMode::Insert : edit::PlaceMode::Overwrite);
@@ -923,6 +984,10 @@ void MainWindow::wire()
     connect(m_mediaBin, &MediaBin::newSequenceRequested, this, &MainWindow::newSequence);
     connect(m_mediaBin, &MediaBin::newTitleRequested, this, &MainWindow::newTitle);
     connect(m_mediaBin, &MediaBin::newColorMatteRequested, this, &MainWindow::newColorMatte);
+    connect(m_mediaBin, &MediaBin::newAdjustmentRequested, this, &MainWindow::newAdjustmentLayer);
+    connect(m_mediaBin, &MediaBin::newModelRequested, this, &MainWindow::newModel3D);
+    connect(m_mediaBin, &MediaBin::newRemotionRequested, this, &MainWindow::newRemotion);
+    connect(m_mediaBin, &MediaBin::rerenderRequested, this, &MainWindow::rerenderRemotion);
     connect(m_mediaBin, &MediaBin::sequenceActivated, this, [this](const QString& id) {
         pauseProgram();
         m_document->setSequence(id);
@@ -1049,8 +1114,8 @@ void MainWindow::syncEngineSources()
     if (!m_useProxies)
         for (auto& ref : media) ref.proxyPath.clear();
 
-    m_programEngine->setSource(seq, media);
-    m_audio->setSource(seq, media);
+    m_programEngine->setSource(seq, media, m_document->project().sequences);
+    m_audio->setSource(seq, media, m_document->project().sequences);
     if (m_loop) setLoop(true);
     updateProgramInfo();
 }
@@ -1087,7 +1152,7 @@ void MainWindow::autoQueueProxies()
     m_scanningProxies = true;
     const QVector<MediaRef> media = m_document->project().media;
     for (const auto& ref : media) {
-        if (!ref.hasVideo || ref.height <= 1080 || ref.offline || ref.isStillImage()) continue;
+        if (!ref.hasVideo || ref.height <= m_proxyThreshold || ref.offline || ref.isStillImage()) continue;
         const QString existing = ProxyManager::proxyPathFor(ref, 540);
         if (QFileInfo::exists(existing)) {
             if (ref.proxyPath != existing) m_document->setMediaProxy(ref.id, existing);
@@ -1277,32 +1342,44 @@ void MainWindow::exportInterchange(const QString& kind)
 
 void MainWindow::importInterchange()
 {
-    const QString path = QFileDialog::getOpenFileName(this, tr("Import Timeline"), QString(),
-                                                      tr("Timelines (*.otio *.xml *.edl);;All Files (*)"));
-    if (path.isEmpty()) return;
-    Sequence seq;
+    const QString path = QFileDialog::getOpenFileName(
+        this, tr("Import Project or Timeline"), QString(),
+        tr("Projects and timelines (*.prproj *.otio *.xml *.edl);;Premiere Pro Project (*.prproj);;All Files (*)"));
+    if (!path.isEmpty()) importInterchangeFile(path);
+}
+
+void MainWindow::importInterchangeFile(const QString& path)
+{
+    QVector<Sequence> sequences;
     QVector<MediaRef> media;
     QStringList warnings;
     QString error;
-    if (!io::importTimeline(path, seq, media, &warnings, &error)) {
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    bool ok = false;
+    if (path.endsWith(QStringLiteral(".prproj"), Qt::CaseInsensitive)) {
+        ok = io::importPremiereProject(path, sequences, media, &warnings, &error);
+    } else {
+        Sequence seq;
+        ok = io::importTimeline(path, seq, media, &warnings, &error);
+        if (ok) sequences << seq;
+    }
+    QApplication::restoreOverrideCursor();
+    if (!ok) {
         QMessageBox::warning(this, tr("Import failed"), error);
         return;
     }
-    // Probe referenced files so durations, sizes and streams are real.
+
+    // Reuse media already in the project; probe the rest so sizes/streams are real.
+    QHash<QString, QString> remap;
     int offline = 0;
     for (auto& m : media) {
-        bool reused = false;
         for (const auto& existing : m_document->project().media) {
             if (!m.path.isEmpty() && QFileInfo(existing.path) == QFileInfo(m.path)) {
-                const QString oldId = m.id;
-                for (auto& t : seq.tracks)
-                    for (auto& c : t.clips)
-                        if (c.mediaId == oldId) c.mediaId = existing.id;
-                reused = true;
+                remap.insert(m.id, existing.id);
                 break;
             }
         }
-        if (reused) continue;
+        if (remap.contains(m.id)) continue;
         if (QFileInfo::exists(m.path)) {
             ProbeResult probe = probeMedia(m.path);
             if (probe.ok) {
@@ -1316,17 +1393,22 @@ void MainWindow::importInterchange()
         }
         m_document->addMedia(m);
     }
-    m_document->addSequence(seq);
+    int clips = 0;
+    for (auto& seq : sequences) {
+        for (auto& t : seq.tracks)
+            for (auto& c : t.clips) {
+                c.mediaId = remap.value(c.mediaId, c.mediaId);
+                if (t.kind == TrackKind::Video) fx::ensureIntrinsics(c);
+                ++clips;
+            }
+        m_document->addSequence(seq);
+    }
     m_timeline->zoomToFit();
-    QString message = tr("Imported %1 (%2 clips)").arg(seq.name).arg([&] {
-        int n = 0;
-        for (const auto& t : seq.tracks) n += t.clips.size();
-        return n;
-    }());
-    if (offline > 0) message += tr(" - %1 media offline").arg(offline);
+    QString message = tr("Imported %n sequence(s), %1 clips", nullptr, sequences.size()).arg(clips);
+    if (offline > 0) message += tr(" - %1 media offline (right-click in Project to relink)").arg(offline);
     showStatus(message);
     if (!warnings.isEmpty())
-        QMessageBox::information(this, tr("Timeline import notes"), warnings.mid(0, 30).join(QLatin1Char('\n')));
+        QMessageBox::information(this, tr("Import notes"), warnings.mid(0, 30).join(QLatin1Char('\n')));
 }
 
 void MainWindow::newSequence()
@@ -1432,6 +1514,177 @@ void MainWindow::editTitle(const QString& clipId)
     });
 }
 
+void MainWindow::newAdjustmentLayer()
+{
+    Clip clip;
+    clip.generator = GeneratorKind::Adjustment;
+    clip.label = tr("Adjustment Layer");
+    placeGenerator(clip);
+    showStatus(tr("Adjustment layer added: drop effects on it to affect every track below"));
+}
+
+void MainWindow::newModel3D()
+{
+    const QString path = QFileDialog::getOpenFileName(this, tr("3D Model"), QString(), tr("Wavefront OBJ (*.obj)"));
+    if (path.isEmpty()) return;
+    const auto mesh = Mesh::load(path);
+    if (!mesh->valid()) {
+        QMessageBox::warning(this, tr("3D Model"), tr("Could not load %1: %2").arg(QFileInfo(path).fileName(), mesh->error));
+        return;
+    }
+    Clip clip;
+    clip.generator = GeneratorKind::Model3D;
+    clip.modelPath = path;
+    clip.label = QFileInfo(path).completeBaseName();
+    clip.effects.push_back(fx::makeModel3D());
+    placeGenerator(clip);
+    raisePanel(m_effectControls);
+    showStatus(tr("%1: %2 triangles. Animate rotation, camera and light in Effect Controls.")
+                   .arg(QFileInfo(path).fileName()).arg(mesh->triangles.size()));
+}
+
+void MainWindow::ensureRemotionBridge()
+{
+    if (m_remotion) return;
+    {
+        m_remotion = new RemotionBridge(this);
+        connect(m_remotion, &RemotionBridge::progress, this, [this](int percent, const QString&) {
+            m_statsLabel->setText(tr("Remotion %1%").arg(percent));
+        });
+        connect(m_remotion, &RemotionBridge::failed, this, [this](const QString& error) {
+            m_statsLabel->clear();
+            QMessageBox::warning(this, tr("Remotion"), error);
+        });
+        connect(m_remotion, &RemotionBridge::finished, this, [this](const QString& output) {
+            m_statsLabel->clear();
+            ProbeResult probe = probeMedia(output);
+            if (!probe.ok) {
+                QMessageBox::warning(this, tr("Remotion"), probe.error);
+                return;
+            }
+            const QJsonObject meta = m_remotion->property("request").toJsonObject();
+            if (!m_remotionReplace.isEmpty()) {
+                MediaRef updated = probe.ref;
+                if (const MediaRef* old = m_document->project().mediaById(m_remotionReplace)) {
+                    updated.remotionEntry = old->remotionEntry;
+                    updated.remotionComposition = old->remotionComposition;
+                    updated.remotionProps = old->remotionProps;
+                    updated.bin = old->bin;
+                }
+                ThumbnailCache::instance().forget(output);
+                m_document->replaceMediaPath(m_remotionReplace, updated);
+                m_programEngine->invalidate();
+                m_remotionReplace.clear();
+                showStatus(tr("Re-rendered %1").arg(QFileInfo(output).fileName()));
+                return;
+            }
+            MediaRef ref = probe.ref;
+            ref.remotionEntry = meta.value(QStringLiteral("project")).toString();
+            ref.remotionComposition = meta.value(QStringLiteral("composition")).toString();
+            ref.remotionProps = meta.value(QStringLiteral("props")).toString();
+            ref.bin = QStringLiteral("Remotion");
+            if (!m_document->project().bins.contains(ref.bin)) m_document->project().bins << ref.bin;
+            m_document->addMedia(ref);
+            // Overlay on the first video lane above V1 at the playhead.
+            const Sequence* s = m_document->sequence();
+            const int target = s ? s->trackForLane(TrackKind::Video, std::min(2, s->videoTrackCount())) : -1;
+            placeMedia({ref.id}, m_document->playhead(), target, edit::PlaceMode::Overwrite);
+            showStatus(tr("Remotion composition %1 rendered and placed").arg(ref.remotionComposition));
+        });
+    }
+}
+
+void MainWindow::newRemotion()
+{
+    RemotionDialog dialog(this);
+    if (dialog.exec() != QDialog::Accepted) return;
+    ensureRemotionBridge();
+    if (dialog.studioRequested()) {
+        m_remotion->openStudio(dialog.project(), dialog.entry());
+        showStatus(tr("Opening Remotion Studio (http://localhost:3000)..."));
+        return;
+    }
+    const QString base = m_currentFile.isEmpty()
+                             ? QStandardPaths::writableLocation(QStandardPaths::MoviesLocation) + QStringLiteral("/Breefer Remotion")
+                             : QFileInfo(m_currentFile).absolutePath() + QStringLiteral("/Remotion Renders");
+    RemotionBridge::Request request;
+    request.project = dialog.project();
+    request.entry = dialog.entry();
+    request.composition = dialog.composition();
+    request.propsJson = dialog.props();
+    request.output = QDir(base).filePath(QStringLiteral("%1-%2.mov").arg(request.composition)
+                                                .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-hhmmss"))));
+    m_remotion->setProperty("request", QJsonObject{{"project", request.project}, {"composition", request.composition},
+                                                    {"props", request.propsJson}});
+    m_remotionReplace.clear();
+    m_remotion->render(request);
+}
+
+void MainWindow::rerenderRemotion(const QString& mediaId)
+{
+    const MediaRef* ref = m_document->project().mediaById(mediaId);
+    if (!ref || ref->remotionEntry.isEmpty()) return;
+    ensureRemotionBridge();
+    if (m_remotion->isBusy()) return;
+    RemotionBridge::Request request;
+    request.project = ref->remotionEntry;
+    request.composition = ref->remotionComposition;
+    request.propsJson = ref->remotionProps;
+    request.output = ref->path;
+    m_remotionReplace = mediaId;
+    m_remotion->render(request);
+}
+
+void MainWindow::showPluginManager()
+{
+    PluginHost& host = PluginHost::instance();
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Plugins"));
+    dialog.resize(560, 420);
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* list = new QListWidget(&dialog);
+    auto fill = [&] {
+        list->clear();
+        for (const auto& e : host.effects())
+            list->addItem(QStringLiteral("%1  -  %2  (%3)").arg(e.name, e.category, e.library));
+        for (const auto& err : host.errors()) list->addItem(tr("Error: %1").arg(err));
+        if (list->count() == 0) list->addItem(tr("No plugins installed."));
+    };
+    fill();
+    layout->addWidget(new QLabel(tr("Native effect plugins (C API, see sdk/include/breefer_plugin.h). Folders:\n%1")
+                                     .arg(host.folders().join(QLatin1Char('\n'))), &dialog));
+    layout->addWidget(list, 1);
+    auto* row = new QHBoxLayout;
+    auto* rescan = new QPushButton(tr("Rescan"), &dialog);
+    auto* open = new QPushButton(tr("Open User Plugin Folder"), &dialog);
+    auto* close = new QPushButton(tr("Close"), &dialog);
+    row->addWidget(rescan);
+    row->addWidget(open);
+    row->addStretch(1);
+    row->addWidget(close);
+    layout->addLayout(row);
+    connect(rescan, &QPushButton::clicked, &dialog, [&] { host.scan(); fill(); m_effects->refreshList(); });
+    connect(open, &QPushButton::clicked, &dialog, [&] {
+        const QString dir = host.folders().value(1);
+        QDir().mkpath(dir);
+        QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+    });
+    connect(close, &QPushButton::clicked, &dialog, &QDialog::accept);
+    dialog.exec();
+}
+
+void MainWindow::applyLowEndMode(bool on)
+{
+    m_lowEnd = on;
+    appSettings().setValue(QStringLiteral("lowEndMode"), on);
+    m_proxyThreshold = on ? 720 : 1080;
+    m_timeline->setShowThumbnails(!on);
+    setPlaybackDivisor(on ? 4 : 2);
+    autoQueueProxies();
+    showStatus(on ? tr("Low-end mode on: 1/4 playback, proxies above 720p, no timeline thumbnails")
+                  : tr("Low-end mode off"));
+}
+
 void MainWindow::newColorMatte()
 {
     const QColor color = QColorDialog::getColor(QColor(0x20, 0x40, 0x80), this, tr("Color Matte"));
@@ -1453,6 +1706,7 @@ void MainWindow::exportFrame()
     Compositor compositor;
     compositor.setPreviewSize(seq.width, seq.height);
     compositor.setHighQuality(true);
+    compositor.setLibrary(m_document->project().sequences);
     const QImage frame = compositor.render(seq, media, m_document->playhead());
     QApplication::restoreOverrideCursor();
 
@@ -1772,7 +2026,7 @@ void MainWindow::showExportDialog()
 
     QVector<MediaRef> media = m_document->project().media;
     for (auto& m : media) m.proxyPath.clear();   // always render from originals
-    m_exporter->start(m_document->snapshotSequence(), media, settings);
+    m_exporter->start(m_document->snapshotSequence(), media, settings, m_document->project().sequences);
     raisePanel(m_queue);
     showStatus(dialog.queueOnly() ? tr("Queued %1").arg(settings.label) : tr("Exporting %1...").arg(settings.label));
 }
@@ -1809,6 +2063,14 @@ void MainWindow::showPreferences()
     transition->setSuffix(tr(" frames"));
     form->addRow(tr("Default transition duration"), transition);
 
+    auto* lowEnd = new QCheckBox(tr("Low-end mode (Intel Core 2nd-4th gen, 4-8 GB RAM, HDD)"), &dialog);
+    lowEnd->setToolTip(tr("1/4 playback resolution, proxies for anything above 720p, no timeline thumbnails"));
+    lowEnd->setChecked(m_lowEnd);
+    form->addRow(tr("Performance"), lowEnd);
+    auto* hwDecode = new QCheckBox(tr("Hardware decoding (DirectX / VA-API / VideoToolbox)"), &dialog);
+    hwDecode->setChecked(VideoDecoder::hardwareDecodeEnabled());
+    form->addRow(QString(), hwDecode);
+
     auto* match = new QComboBox(&dialog);
     match->addItem(tr("Ask"), QStringLiteral("ask"));
     match->addItem(tr("Always change sequence"), QStringLiteral("always"));
@@ -1831,6 +2093,12 @@ void MainWindow::showPreferences()
     settings.setValue(QStringLiteral("autosaveMinutes"), autosave->value());
     settings.setValue(QStringLiteral("defaultTransitionFrames"), transition->value());
     settings.setValue(QStringLiteral("matchSequencePolicy"), match->currentData());
+    settings.setValue(QStringLiteral("hardwareDecode"), hwDecode->isChecked());
+    if (hwDecode->isChecked() != VideoDecoder::hardwareDecodeEnabled()) {
+        VideoDecoder::setHardwareDecodeEnabled(hwDecode->isChecked());
+        m_programEngine->invalidate();
+    }
+    if (lowEnd->isChecked() != m_lowEnd) applyLowEndMode(lowEnd->isChecked());
     m_timeline->setDefaultTransitionFrames(transition->value());
     if (autosave->value() > 0) m_autosaveTimer->start(autosave->value() * 60000);
     else m_autosaveTimer->stop();

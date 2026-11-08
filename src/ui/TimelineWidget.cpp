@@ -810,6 +810,9 @@ void TimelineWidget::paintClip(QPainter& painter, int trackIndex, int clipIndex,
     if (clip.labelColor >= 0) label = theme::labelColor(clip.labelColor);
     else if (clip.generator == GeneratorKind::Title) label = theme::labelColor(3);
     else if (clip.generator == GeneratorKind::ColorMatte) label = theme::labelColor(7);
+    else if (clip.generator == GeneratorKind::Nest) label = theme::labelColor(4);
+    else if (clip.generator == GeneratorKind::Adjustment) label = theme::labelColor(6);
+    else if (clip.generator == GeneratorKind::Model3D) label = theme::labelColor(2);
     else label = audio ? theme::labelColor(5) : theme::labelColor(1);
 
     QColor body = selected ? label.lighter(125) : label;
@@ -901,7 +904,13 @@ void TimelineWidget::paintClip(QPainter& painter, int trackIndex, int clipIndex,
         if (text.isEmpty()) {
             if (clip.generator == GeneratorKind::Title) text = clip.title.text.section(QLatin1Char('\n'), 0, 0);
             else if (clip.generator == GeneratorKind::ColorMatte) text = tr("Color Matte");
-            else text = mediaLabel(clip.mediaId);
+            else if (clip.generator == GeneratorKind::Adjustment) text = tr("Adjustment Layer");
+            else if (clip.generator == GeneratorKind::Model3D) text = QFileInfo(clip.modelPath).fileName();
+            else if (clip.generator == GeneratorKind::Nest) {
+                text = tr("Nested Sequence");
+                for (const auto& s : m_document->project().sequences)
+                    if (s.id == clip.nestedSequenceId) text = s.name;
+            } else text = mediaLabel(clip.mediaId);
         }
         if (std::abs(clip.speed - 1.0) > 1e-6 || clip.reverse)
             text += QStringLiteral(" [%1%2%]").arg(clip.reverse ? QStringLiteral("-") : QString()).arg(clip.speed * 100.0, 0, 'f', 0);
@@ -1553,6 +1562,7 @@ void TimelineWidget::mouseDoubleClickEvent(QMouseEvent* event)
     if (hit.clipId.isEmpty()) return;
     const Clip* clip = seq->findClip(hit.clipId);
     if (clip && clip->generator == GeneratorKind::Title) emit titleEditRequested(hit.clipId);
+    else if (clip && clip->generator == GeneratorKind::Nest) emit openSequenceRequested(clip->nestedSequenceId);
     else emit clipActivated(hit.clipId);
 }
 
@@ -1789,6 +1799,7 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* event)
         menu.addAction(tr("Unlink"), this, &TimelineWidget::unlinkSelection);
         menu.addAction(tr("Link"), this, &TimelineWidget::linkSelection);
         menu.addAction(tr("Duplicate"), this, &TimelineWidget::duplicateSelection);
+        menu.addAction(tr("Nest..."), this, &TimelineWidget::nestSelection);
         menu.addSeparator();
         menu.addAction(tr("Speed/Duration..."), this, &TimelineWidget::speedDialog);
         menu.addAction(tr("Reverse"), this, &TimelineWidget::reverseSelection);
@@ -2365,6 +2376,37 @@ void TimelineWidget::renameSelected()
             if (Clip* c = s.findClip(id)) c->label = name;
         return true;
     });
+}
+
+void TimelineWidget::nestSelection()
+{
+    const QStringList ids = targetedSelection();
+    if (ids.isEmpty()) return;
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, tr("Nested Sequence Name"), tr("Name:"), QLineEdit::Normal,
+                                               tr("Nested Sequence %1").arg(m_document->project().sequences.size()), &ok);
+    if (!ok || name.trimmed().isEmpty()) return;
+    Sequence nested;
+    QStringList created;
+    // The nested sequence must exist before the edit references it.
+    const Sequence* seq = m_document->sequence();
+    if (!seq) return;
+    Sequence probe = *seq;
+    if (edit::nest(probe, ids, nested, name.trimmed()).isEmpty()) return;
+    const QString nestedId = nested.id;
+    m_document->insertSequence(nested);
+    m_document->applyEdit(tr("Nest"), [&](Sequence& s) {
+        Sequence again;
+        created = edit::nest(s, ids, again, name.trimmed());
+        if (created.isEmpty()) return false;
+        // Point the nest clips at the sequence we already inserted.
+        for (auto& t : s.tracks)
+            for (auto& c : t.clips)
+                if (created.contains(c.id)) c.nestedSequenceId = nestedId;
+        return true;
+    });
+    if (!created.isEmpty()) m_document->setSelectionList(created);
+    emit statusMessage(tr("Nested %n clip(s) into \"%1\" - double-click it to open", nullptr, ids.size()).arg(name.trimmed()));
 }
 
 void TimelineWidget::editTransitionDuration()

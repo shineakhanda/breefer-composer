@@ -194,6 +194,7 @@ public:
         Sequence sequence;
         QVector<MediaRef> media;
         Exporter::Settings settings;
+        QVector<Sequence> library;
     };
 
     void enqueue(const Job& job)
@@ -447,6 +448,7 @@ private:
         Compositor compositor;
         compositor.setPreviewSize(width, height);
         compositor.setHighQuality(s.highQualityScaling);
+        compositor.setLibrary(job.library);
 
         const Tick tpf = seq.rate.ticksPerFrame();
         const qint64 firstFrame = rangeStart / tpf;
@@ -529,7 +531,7 @@ private:
                 const int frames = static_cast<int>(std::min<Tick>(1024, (until - audioCursor + kTps - 1) / kTps));
                 if (frames <= 0) break;
                 std::vector<float> block(static_cast<size_t>(frames) * 2, 0.0f);
-                mixSequenceBlock(seq, audioCursor, frames, block.data(), scratch, lookup, decoderPos);
+                mixSequenceBlock(seq, audioCursor, frames, block.data(), scratch, lookup, decoderPos, &job.library);
                 pending.insert(pending.end(), block.begin(), block.end());
                 audioCursor += static_cast<Tick>(frames) * kTps;
                 while (static_cast<int>(pending.size()) >= audioFrameSize * 2) {
@@ -624,9 +626,10 @@ Exporter::~Exporter()
     delete m_worker;
 }
 
-void Exporter::start(const Sequence& sequence, const QVector<MediaRef>& media, const Settings& settings)
+void Exporter::start(const Sequence& sequence, const QVector<MediaRef>& media, const Settings& settings,
+                     const QVector<Sequence>& library)
 {
-    m_worker->enqueue({sequence, media, settings});
+    m_worker->enqueue({sequence, media, settings, library});
 }
 
 void Exporter::cancel() { m_worker->cancel(); }

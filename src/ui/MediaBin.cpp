@@ -7,6 +7,7 @@
 #include "ui/Theme.h"
 #include "ui/Widgets.h"
 
+#include <QInputDialog>
 #include <QLabel>
 #include <QSlider>
 #include <QTimer>
@@ -36,6 +37,7 @@ namespace {
 
 const QString kMediaMime = QStringLiteral("application/x-breefer-media");
 const QString kSequencePrefix = QStringLiteral("seq:");
+const QString kBinPrefix = QStringLiteral("bin:");
 
 const QStringList kMediaSuffixes = {
     "mp4", "mov", "mkv", "avi", "m4v", "webm", "mxf", "mts", "m2ts", "wmv", "flv", "mpg", "mpeg", "3gp",
@@ -55,7 +57,7 @@ protected:
         QStringList ids;
         for (auto* item : items) {
             const QString id = item->data(Qt::UserRole).toString();
-            if (!id.startsWith(kSequencePrefix)) ids << id;
+            if (!id.startsWith(kSequencePrefix) && !id.startsWith(kBinPrefix)) ids << id;
         }
         auto* data = new QMimeData;
         data->setData(kMediaMime, ids.join(QLatin1Char('\n')).toUtf8());
@@ -135,16 +137,16 @@ MediaBin::MediaBin(Document* document, QWidget* parent)
     newMenu->addAction(icons::icon(icons::Id::Sequence), tr("Sequence..."), this, &MediaBin::newSequenceRequested);
     newMenu->addAction(icons::icon(icons::Id::Title), tr("Title..."), this, &MediaBin::newTitleRequested);
     newMenu->addAction(icons::icon(icons::Id::Matte), tr("Color Matte..."), this, &MediaBin::newColorMatteRequested);
+    newMenu->addAction(icons::icon(icons::Id::Nest), tr("Adjustment Layer"), this, &MediaBin::newAdjustmentRequested);
+    newMenu->addAction(icons::icon(icons::Id::Still), tr("3D Model (OBJ)..."), this, &MediaBin::newModelRequested);
+    newMenu->addAction(icons::icon(icons::Id::Film), tr("Remotion / React Composition..."), this, &MediaBin::newRemotionRequested);
     newItem->setMenu(newMenu);
     row->addWidget(newItem);
+    auto* newBin = iconButton(icons::Id::NewBin, tr("New Bin"), bottom, false, 15);
+    connect(newBin, &QToolButton::clicked, this, &MediaBin::newBin);
+    row->addWidget(newBin);
     auto* trash = iconButton(icons::Id::Trash, tr("Clear (remove selected media)"), bottom, false, 15);
-    connect(trash, &QToolButton::clicked, this, [this] {
-        const QStringList ids = selectedMediaIds();
-        if (ids.isEmpty()) return;
-        if (QMessageBox::question(this, tr("Clear"), tr("Remove %n item(s) and every clip that uses them?", nullptr, ids.size()))
-            != QMessageBox::Yes) return;
-        for (const QString& id : ids) m_document->removeMedia(id);
-    });
+    connect(trash, &QToolButton::clicked, this, &MediaBin::removeSelected);
     row->addWidget(trash);
     root->addWidget(bottom);
 
@@ -158,7 +160,10 @@ MediaBin::MediaBin(Document* document, QWidget* parent)
     connect(m_list, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item) {
         if (!item) return;
         const QString id = item->data(Qt::UserRole).toString();
-        if (id.startsWith(kSequencePrefix)) emit sequenceActivated(id.mid(kSequencePrefix.size()));
+        if (id.startsWith(kBinPrefix)) {
+            m_currentBin = id.mid(kBinPrefix.size());
+            refresh();
+        } else if (id.startsWith(kSequencePrefix)) emit sequenceActivated(id.mid(kSequencePrefix.size()));
         else emit mediaActivated(id);
     });
     connect(m_list, &QListWidget::customContextMenuRequested, this, &MediaBin::showContextMenu);
@@ -186,7 +191,7 @@ QStringList MediaBin::selectedMediaIds() const
     QStringList ids;
     for (auto* item : m_list->selectedItems()) {
         const QString id = item->data(Qt::UserRole).toString();
-        if (!id.startsWith(kSequencePrefix)) ids << id;
+        if (!id.startsWith(kSequencePrefix) && !id.startsWith(kBinPrefix)) ids << id;
     }
     return ids;
 }
@@ -247,9 +252,38 @@ void MediaBin::refresh()
     m_list->setDragDropMode(QAbstractItemView::DragOnly);
 
     const QString filter = m_search->text().trimmed();
+    const bool searching = !filter.isEmpty();
+    if (!m_currentBin.isEmpty() && !childBins(QString()).isEmpty() && !m_document->project().bins.contains(m_currentBin)) {
+        bool used = false;
+        for (const auto& m : m_document->project().media) used = used || m.bin.startsWith(m_currentBin);
+        if (!used) m_currentBin.clear();
+    }
+    m_countLabel->setText(m_currentBin.isEmpty() ? QString() : m_currentBin);
 
-    // Sequences first, as in Premiere's bin.
+    auto folderIcon = [] {
+        QPixmap px(148, 83);
+        px.fill(QColor(0x12, 0x12, 0x12));
+        QPainter p(&px);
+        icons::paint(p, icons::Id::Folder, QRectF(52, 14, 44, 44), QColor(0xc8, 0xa9, 0x5a));
+        p.end();
+        return QIcon(px);
+    };
+    if (!searching && !m_currentBin.isEmpty()) {
+        auto* up = new QListWidgetItem(folderIcon(), QStringLiteral(".."), m_list);
+        up->setData(Qt::UserRole, kBinPrefix + m_currentBin.section(QLatin1Char('/'), 0, -2));
+        up->setToolTip(tr("Up one level"));
+    }
+    if (!searching) {
+        for (const QString& bin : childBins(m_currentBin)) {
+            auto* item = new QListWidgetItem(folderIcon(), bin.section(QLatin1Char('/'), -1), m_list);
+            item->setData(Qt::UserRole, kBinPrefix + bin);
+            item->setToolTip(tr("Bin - double-click to open"));
+        }
+    }
+
+    // Sequences first (root only), as in Premiere's bin.
     for (const auto& seq : m_document->project().sequences) {
+        if (!searching && !m_currentBin.isEmpty()) break;
         if (!filter.isEmpty() && !seq.name.contains(filter, Qt::CaseInsensitive)) continue;
         auto* item = new QListWidgetItem(m_list);
         const bool active = m_document->sequence() && m_document->sequence()->id == seq.id;
@@ -271,6 +305,7 @@ void MediaBin::refresh()
 
     for (const auto& media : m_document->project().media) {
         if (!filter.isEmpty() && !media.name.contains(filter, Qt::CaseInsensitive)) continue;
+        if (!searching && media.bin != m_currentBin) continue;
         auto* item = new QListWidgetItem(m_list);
         QString text = media.name;
         if (!m_iconMode) {
@@ -314,6 +349,7 @@ QStringList MediaBin::importPaths(const QStringList& paths, QStringList* failure
             if (failures) *failures << QStringLiteral("%1: %2").arg(QFileInfo(file).fileName(), probe.error);
             continue;
         }
+        probe.ref.bin = m_currentBin;
         m_document->addMedia(probe.ref);
         ids << probe.ref.id;
     }
@@ -335,6 +371,44 @@ void MediaBin::importFiles()
     importPaths(files, &failures);
     if (!failures.isEmpty())
         QMessageBox::warning(this, tr("Some files could not be imported"), failures.join(QLatin1Char('\n')));
+}
+
+QStringList MediaBin::childBins(const QString& parent) const
+{
+    QStringList all = m_document->project().bins;
+    for (const auto& m : m_document->project().media)
+        if (!m.bin.isEmpty()) all << m.bin;
+    QStringList out;
+    const QString prefix = parent.isEmpty() ? QString() : parent + QLatin1Char('/');
+    for (const QString& b : all) {
+        if (!b.startsWith(prefix) || b == parent) continue;
+        const QString rest = b.mid(prefix.size());
+        const QString child = prefix + rest.section(QLatin1Char('/'), 0, 0);
+        if (!rest.isEmpty() && !out.contains(child)) out << child;
+    }
+    out.sort(Qt::CaseInsensitive);
+    return out;
+}
+
+void MediaBin::newBin()
+{
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, tr("New Bin"), tr("Bin name:"), QLineEdit::Normal, tr("Bin"), &ok)
+                             .trimmed().replace(QLatin1Char('/'), QLatin1Char('-'));
+    if (!ok || name.isEmpty()) return;
+    const QString path = m_currentBin.isEmpty() ? name : m_currentBin + QLatin1Char('/') + name;
+    if (!m_document->project().bins.contains(path)) m_document->project().bins << path;
+    m_document->markMetaDirty();
+    refresh();
+}
+
+void MediaBin::removeSelected()
+{
+    const QStringList ids = selectedMediaIds();
+    if (ids.isEmpty()) return;
+    if (QMessageBox::question(this, tr("Clear"), tr("Remove %n item(s) and every clip that uses them?", nullptr, ids.size()))
+        != QMessageBox::Yes) return;
+    for (const QString& id : ids) m_document->removeMedia(id);
 }
 
 void MediaBin::importFolder()
@@ -398,6 +472,25 @@ void MediaBin::showContextMenu(const QPoint& pos)
     menu.addAction(tr("Open in Source Monitor"), this, [this, id] { emit mediaActivated(id); });
     menu.addAction(tr("Insert at Playhead (,)"), this, [this, id] { emit insertRequested(id); });
     menu.addAction(tr("Overwrite at Playhead (.)"), this, [this, id] { emit overwriteRequested(id); });
+    if (!ref->remotionEntry.isEmpty())
+        menu.addAction(tr("Re-render Remotion Composition"), this, [this, id] { emit rerenderRequested(id); });
+    QMenu* move = menu.addMenu(tr("Move to Bin"));
+    QStringList allBins = m_document->project().bins;
+    for (const auto& m : m_document->project().media)
+        if (!m.bin.isEmpty() && !allBins.contains(m.bin)) allBins << m.bin;
+    allBins.sort();
+    allBins.prepend(QString());
+    const QStringList selection = selectedMediaIds().isEmpty() ? QStringList{id} : selectedMediaIds();
+    for (const QString& bin : allBins) {
+        move->addAction(bin.isEmpty() ? tr("(Project root)") : bin, this, [this, selection, bin] {
+            for (const QString& mid : selection)
+                if (MediaRef* m = m_document->project().mediaById(mid)) m->bin = bin;
+            m_document->markMetaDirty();
+            refresh();
+        });
+    }
+    move->addSeparator();
+    move->addAction(tr("New Bin..."), this, &MediaBin::newBin);
     menu.addSeparator();
     QAction* relinkAction = menu.addAction(tr("Link Media..."), this, [this, id] { relink(id); });
     relinkAction->setEnabled(true);

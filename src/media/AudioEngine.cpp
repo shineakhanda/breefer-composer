@@ -37,10 +37,12 @@ struct AudioEngine::Impl {
     std::atomic<bool> quit{false};
     std::atomic<bool> playing{false};
     std::atomic<uint64_t> generation{0};
+    int blocksSincePrune = 0;   // feeder thread only
 
     mutable std::mutex sourceMutex;
     Sequence sequence;
     QVector<MediaRef> media;
+    QVector<Sequence> library;
 
     std::vector<float> ring;
     uint64_t ringFrames = static_cast<uint64_t>(kRate) * 2;   // 2 s of headroom
@@ -94,16 +96,38 @@ struct AudioEngine::Impl {
         std::fill(mix.begin(), mix.end(), 0.0f);
 
         Sequence seq;
+        QVector<Sequence> lib;
         {
             std::lock_guard<std::mutex> lock(sourceMutex);
             seq = sequence;
+            lib = library;
         }
         if (seq.tracks.isEmpty()) return;
+
+        // Close decoders for clips that no longer exist (splits create new ids;
+        // without this every edit would leak a file handle and its buffers).
+        if (++blocksSincePrune > 200) {
+            blocksSincePrune = 0;
+            std::unordered_map<std::string, bool> alive;
+            for (const auto& t : seq.tracks)
+                for (const auto& c : t.clips) alive[c.id.toStdString()] = true;
+            for (const auto& nested : lib)
+                for (const auto& t : nested.tracks)
+                    for (const auto& c : t.clips) alive[c.id.toStdString()] = true;
+            for (auto it = decoders.begin(); it != decoders.end();) {
+                if (!alive.count(it->first)) {
+                    decoderPos.erase(it->first);
+                    it = decoders.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
         mixSequenceBlock(seq, blockStart, kBlockFrames, mix.data(), scratch,
                          [this](const QString& clipId, const QString& mediaId) {
                              return decoderFor(clipId, mediaId);
                          },
-                         decoderPos);
+                         decoderPos, &lib);
 
         // Soft clip so a dense mix never slams the device with > 0 dBFS.
         for (auto& sample : mix) sample = std::tanh(sample);
@@ -258,11 +282,13 @@ void AudioEngine::shutdown()
     }
 }
 
-void AudioEngine::setSource(const Sequence& sequence, const QVector<MediaRef>& media)
+void AudioEngine::setSource(const Sequence& sequence, const QVector<MediaRef>& media,
+                            const QVector<Sequence>& library)
 {
     std::lock_guard<std::mutex> lock(m_impl->sourceMutex);
     m_impl->sequence = sequence;
     m_impl->media = media;
+    m_impl->library = library;
 }
 
 void AudioEngine::play(Tick from)

@@ -33,6 +33,7 @@ public:
     void setSnapping(bool on);
     bool linkedSelection() const { return m_linkedSelection; }
     void setLinkedSelection(bool on);
+    void setShowThumbnails(bool on) { m_showThumbs = on; viewport()->update(); }
 
     Tick defaultTransitionTicks() const;
     void setDefaultTransitionFrames(int frames) { m_defaultTransitionFrames = frames; }
@@ -79,6 +80,7 @@ public slots:
     void setSelectedLabelColor(int color);
     void renameSelected();
     void editTransitionDuration();
+    void nestSelection();
 
 signals:
     void scrubStarted();
@@ -89,6 +91,7 @@ signals:
     void filesDropped(const QStringList& paths, bc::Tick at, int trackIndex, bool insert);
     void clipActivated(const QString& clipId);   // double click
     void titleEditRequested(const QString& clipId);
+    void openSequenceRequested(const QString& sequenceId);
     void snappingToggled(bool on);
     void linkedSelectionToggled(bool on);
 

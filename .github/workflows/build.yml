@@ -1,0 +1,139 @@
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  QT_VERSION: "6.9.*"
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: win64_mingw
+          tools: tools_mingw1310
+          cache: true
+      - name: FFmpeg (LGPL shared)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl-shared.zip -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg
+      - name: Configure
+        shell: pwsh
+        run: |
+          $mingw = Join-Path $env:IQTA_TOOLS "mingw1310_64/bin"
+          $env:PATH = "$mingw;$env:PATH"
+          cmake -S . -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_C_COMPILER="$mingw/gcc.exe" -DCMAKE_CXX_COMPILER="$mingw/g++.exe" `
+            -DFFMPEG_ROOT="${{ github.workspace }}/ffmpeg/ffmpeg-master-latest-win64-lgpl-shared"
+      - name: Build
+        shell: pwsh
+        run: |
+          $env:PATH = "$(Join-Path $env:IQTA_TOOLS 'mingw1310_64/bin');$env:PATH"
+          cmake --build build --parallel
+      - name: Test
+        shell: pwsh
+        run: |
+          $env:PATH = "$(Join-Path $env:IQTA_TOOLS 'mingw1310_64/bin');$env:QT_ROOT_DIR/bin;$env:PATH"
+          ./build/breefer_tests.exe
+      - name: Package
+        shell: pwsh
+        run: |
+          $env:PATH = "$(Join-Path $env:IQTA_TOOLS 'mingw1310_64/bin');$env:PATH"
+          cd build
+          cpack -G ZIP
+          cpack -G NSIS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: breefer-windows
+          path: |
+            build/BreeferComposer-*.zip
+            build/BreeferComposer-*.exe
+
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libgl1-mesa-dev libxkbcommon-x11-0 libxcb-cursor0 \
+            libasound2-dev libpulse-dev libva-dev fuse libfuse2
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          cache: true
+      - name: FFmpeg (LGPL shared)
+        run: |
+          curl -sSL https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-lgpl-shared.tar.xz | tar xJ
+      - name: Build
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
+            -DFFMPEG_ROOT=$PWD/ffmpeg-master-latest-linux64-lgpl-shared
+          cmake --build build
+      - name: Test
+        run: QT_QPA_PLATFORM=offscreen ./build/breefer_tests
+      - name: AppImage
+        run: |
+          DESTDIR=$PWD/AppDir cmake --install build
+          curl -sSLo linuxdeploy https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          curl -sSLo linuxdeploy-plugin-qt https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x linuxdeploy linuxdeploy-plugin-qt
+          export LD_LIBRARY_PATH=$PWD/ffmpeg-master-latest-linux64-lgpl-shared/lib:$LD_LIBRARY_PATH
+          export QMAKE=$QT_ROOT_DIR/bin/qmake
+          ./linuxdeploy --appimage-extract-and-run --appdir AppDir \
+            --desktop-file packaging/linux/org.breefer.Composer.desktop \
+            --icon-file packaging/linux/org.breefer.Composer.svg \
+            --plugin qt --output appimage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: breefer-linux
+          path: Breefer_Composer-*.AppImage
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: brew install ffmpeg pkg-config ninja
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          cache: true
+      - name: Build
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DFFMPEG_ROOT=/nonexistent
+          cmake --build build
+      - name: Test
+        run: QT_QPA_PLATFORM=offscreen ./build/breefer_tests
+      - name: Bundle
+        run: |
+          macdeployqt "build/Breefer Composer.app" -dmg
+          mv "build/Breefer Composer.dmg" "build/BreeferComposer-macOS-arm64.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: breefer-macos
+          path: build/BreeferComposer-macOS-arm64.dmg
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, linux, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/**/*
+          generate_release_notes: true

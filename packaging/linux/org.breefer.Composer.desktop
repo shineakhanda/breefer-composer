@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Breefer Composer
+GenericName=Video Editor
+Comment=Non-linear video editor with a Premiere-style workflow
+Exec=breefer %f
+Icon=org.breefer.Composer
+Terminal=false
+Categories=AudioVideo;Video;AudioVideoEditing;
+MimeType=application/x-breefer-project;
+Keywords=video;editor;nle;timeline;premiere;

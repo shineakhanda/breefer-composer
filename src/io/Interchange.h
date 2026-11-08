@@ -25,4 +25,9 @@ bool exportOtio(const Sequence& sequence, const Project& project,
 bool importTimeline(const QString& path, Sequence& out, QVector<MediaRef>& media,
                     QStringList* warnings, QString* error);
 
+// Best-effort Adobe Premiere Pro .prproj import (gzip XML). Returns every
+// sequence with its tracks and clips; media is returned unprobed.
+bool importPremiereProject(const QString& path, QVector<Sequence>& sequences, QVector<MediaRef>& media,
+                           QStringList* warnings, QString* error);
+
 } // namespace bc::io

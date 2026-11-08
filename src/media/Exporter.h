@@ -51,7 +51,8 @@ public:
     ~Exporter() override;
 
     // Queues a job; it starts immediately when the queue is idle.
-    void start(const Sequence& sequence, const QVector<MediaRef>& media, const Settings& settings);
+    void start(const Sequence& sequence, const QVector<MediaRef>& media, const Settings& settings,
+               const QVector<Sequence>& library = {});
     void cancel();        // cancels the running job
     void cancelAll();     // and drops queued ones
     bool isRunning() const;

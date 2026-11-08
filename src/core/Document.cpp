@@ -247,6 +247,13 @@ void Document::setSequence(const QString& sequenceId)
     emit playheadChanged(0);
 }
 
+void Document::insertSequence(const Sequence& seq)
+{
+    m_project.sequences.push_back(seq);
+    m_metaDirty = true;
+    emit sequencesChanged();
+}
+
 QString Document::addSequence(const Sequence& seq)
 {
     m_project.sequences.push_back(seq);

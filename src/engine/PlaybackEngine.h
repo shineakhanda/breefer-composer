@@ -26,7 +26,7 @@ public:
     explicit RenderWorker(QObject* parent = nullptr);
     ~RenderWorker() override;
 
-    void setSource(const Sequence& seq, const QVector<MediaRef>& media);
+    void setSource(const Sequence& seq, const QVector<MediaRef>& media, const QVector<Sequence>& library = {});
     void setPreviewHeight(int height);
     void request(Tick time, bool highQuality = false);
     void invalidate();   // drop decoders + cache on the render thread
@@ -45,6 +45,7 @@ private:
     QWaitCondition m_wake;
     Sequence m_sequence;
     QVector<MediaRef> m_media;
+    QVector<Sequence> m_library;
     std::optional<Tick> m_pending;
     bool m_pendingHq = false;
     bool m_invalidate = false;
@@ -61,7 +62,7 @@ public:
     explicit PlaybackEngine(QObject* parent = nullptr);
     ~PlaybackEngine() override;
 
-    void setSource(const Sequence& seq, const QVector<MediaRef>& media);
+    void setSource(const Sequence& seq, const QVector<MediaRef>& media, const QVector<Sequence>& library = {});
     void setPreviewHeight(int height);
     int previewHeight() const { return m_previewHeight; }
 
@@ -115,6 +116,7 @@ private:
     Tick m_duration = 0;
     Sequence m_sequence;
     QVector<MediaRef> m_media;
+    QVector<Sequence> m_library;
     double m_speed = 1.0;
     bool m_loop = false;
     Tick m_loopIn = 0;

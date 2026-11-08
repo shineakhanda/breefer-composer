@@ -17,11 +17,12 @@ RenderWorker::~RenderWorker()
     stop();
 }
 
-void RenderWorker::setSource(const Sequence& seq, const QVector<MediaRef>& media)
+void RenderWorker::setSource(const Sequence& seq, const QVector<MediaRef>& media, const QVector<Sequence>& library)
 {
     QMutexLocker lock(&m_mutex);
     m_sequence = seq;
     m_media = media;
+    m_library = library;
 }
 
 void RenderWorker::setPreviewHeight(int height)
@@ -78,6 +79,7 @@ void RenderWorker::run()
 
         const Sequence seq = m_sequence;
         const QVector<MediaRef> media = m_media;
+        const QVector<Sequence> library = m_library;
         const int height = std::max(90, m_previewHeight);
 
         lock.unlock();
@@ -87,6 +89,7 @@ void RenderWorker::run()
 
         m_compositor.setPreviewSize(width, height);
         m_compositor.setHighQuality(hq);
+        m_compositor.setLibrary(library);
         QImage image = m_compositor.render(seq, media, time);
         ++m_rendered;
 
@@ -119,17 +122,18 @@ PlaybackEngine::~PlaybackEngine()
     m_worker->stop();
 }
 
-void PlaybackEngine::setSource(const Sequence& seq, const QVector<MediaRef>& media)
+void PlaybackEngine::setSource(const Sequence& seq, const QVector<MediaRef>& media, const QVector<Sequence>& library)
 {
     m_sequence = seq;
     m_media = media;
+    m_library = library;
     m_duration = seq.duration;
     m_rate = seq.rate;
 
     const double fps = std::clamp(m_rate.value(), 1.0, 120.0);
     m_timer->setInterval(std::clamp(static_cast<int>(1000.0 / fps), 8, 50));
 
-    m_worker->setSource(seq, media);
+    m_worker->setSource(seq, media, library);
     requestAt(m_position);
 }
 
@@ -146,7 +150,7 @@ void PlaybackEngine::setPreviewHeight(int height)
 
 void PlaybackEngine::invalidate()
 {
-    m_worker->setSource(m_sequence, m_media);
+    m_worker->setSource(m_sequence, m_media, m_library);
     m_worker->invalidate();
     requestAt(m_position);
 }

@@ -60,6 +60,11 @@ struct MediaRef {
     bool hasAudio = false;
     QString codec;
     QString proxyPath;   // empty until a proxy exists
+    QString bin;         // Project panel folder ("" = root, "A/B" nested)
+    // Remotion / React compositions rendered to this file (re-renderable).
+    QString remotionEntry;        // project dir or bundle
+    QString remotionComposition;
+    QString remotionProps;        // JSON
     bool offline = false;  // file missing on disk at load time
 
     bool isStillImage() const { return duration <= 0; }
@@ -89,7 +94,14 @@ struct Transition {
 QString transitionName(TransitionType type);
 
 // Synthetic media produced by the clip itself instead of a file.
-enum class GeneratorKind { None = 0, Title, ColorMatte };
+enum class GeneratorKind {
+    None = 0,
+    Title,
+    ColorMatte,
+    Nest,             // a whole sequence used as a clip (nestedSequenceId)
+    Adjustment,       // applies its effects to everything below it
+    Model3D,          // OBJ model rendered with the "model3d" effect parameters
+};
 
 struct TitleSpec {
     QString text = QStringLiteral("Title");
@@ -126,6 +138,8 @@ struct Clip {
     GeneratorKind generator = GeneratorKind::None;
     TitleSpec title;
     QColor matteColor = QColor(0x20, 0x40, 0x80);
+    QString nestedSequenceId;   // GeneratorKind::Nest
+    QString modelPath;          // GeneratorKind::Model3D (.obj)
 
     Transition inTransition;
     Transition outTransition;
@@ -225,6 +239,7 @@ struct Project {
     QString id;
     QString name = QStringLiteral("Untitled Project");
     QString filePath;
+    QStringList bins;              // folder paths in the Project panel
     QVector<MediaRef> media;
     QVector<Sequence> sequences;
 

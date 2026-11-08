@@ -35,6 +35,9 @@ std::atomic<bool> g_hwEnabled{true};
 #ifdef Q_OS_WIN
 constexpr AVHWDeviceType kHwType = AV_HWDEVICE_TYPE_D3D11VA;
 constexpr AVPixelFormat kHwFormat = AV_PIX_FMT_D3D11;
+#elif defined(Q_OS_MACOS)
+constexpr AVHWDeviceType kHwType = AV_HWDEVICE_TYPE_VIDEOTOOLBOX;
+constexpr AVPixelFormat kHwFormat = AV_PIX_FMT_VIDEOTOOLBOX;
 #else
 constexpr AVHWDeviceType kHwType = AV_HWDEVICE_TYPE_VAAPI;
 constexpr AVPixelFormat kHwFormat = AV_PIX_FMT_VAAPI;

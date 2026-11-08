@@ -98,6 +98,29 @@ private:
     bool m_queueOnly = false;
 };
 
+// Remotion / React composition picker (project folder, bundle or React plugin).
+class RemotionDialog : public QDialog {
+    Q_OBJECT
+
+public:
+    explicit RemotionDialog(QWidget* parent = nullptr);
+    QString project() const;
+    QString entry() const;
+    QString composition() const;
+    QString props() const;
+    bool studioRequested() const { return m_studio; }
+
+private:
+    void detect();
+    void refreshCompositions();
+    QLineEdit* m_project = nullptr;
+    QLineEdit* m_entry = nullptr;
+    QComboBox* m_composition = nullptr;
+    QPlainTextEdit* m_props = nullptr;
+    QLabel* m_status = nullptr;
+    bool m_studio = false;
+};
+
 class ShortcutsDialog : public QDialog {
     Q_OBJECT
 

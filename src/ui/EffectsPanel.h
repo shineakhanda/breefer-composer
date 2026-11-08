@@ -16,6 +16,9 @@ class EffectsPanel : public QWidget {
 public:
     explicit EffectsPanel(Document* document, QWidget* parent = nullptr);
 
+public slots:
+    void refreshList() { populate(QString()); }
+
 private:
     void applyEffect(const QString& effectType);
     void populate(const QString& filter);

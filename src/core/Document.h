@@ -73,6 +73,7 @@ public:
 
     // Sequences.
     QString addSequence(const Sequence& seq);
+    void insertSequence(const Sequence& seq);   // adds without switching
 
 signals:
     void structureChanged();     // clips added / removed / moved

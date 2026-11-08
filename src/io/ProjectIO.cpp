@@ -155,6 +155,8 @@ QJsonObject clipToJson(const Clip& c)
     o["generator"] = static_cast<int>(c.generator);
     if (c.generator == GeneratorKind::Title) o["title"] = titleToJson(c.title);
     if (c.generator == GeneratorKind::ColorMatte) o["matte"] = colorToJson(c.matteColor);
+    if (c.generator == GeneratorKind::Nest) o["nested"] = c.nestedSequenceId;
+    if (c.generator == GeneratorKind::Model3D) o["model"] = c.modelPath;
     if (c.inTransition.active()) o["in"] = transitionToJson(c.inTransition);
     if (c.outTransition.active()) o["out"] = transitionToJson(c.outTransition);
     QJsonArray effects;
@@ -182,6 +184,8 @@ Clip clipFromJson(const QJsonObject& o)
     c.generator = static_cast<GeneratorKind>(o["generator"].toInt(0));
     if (c.generator == GeneratorKind::Title) c.title = titleFromJson(o["title"].toObject());
     if (c.generator == GeneratorKind::ColorMatte) c.matteColor = colorFromJson(o["matte"], c.matteColor);
+    c.nestedSequenceId = o["nested"].toString();
+    c.modelPath = o["model"].toString();
     c.inTransition = transitionFromJson(o["in"]);
     c.outTransition = transitionFromJson(o["out"]);
     c.effects.clear();
@@ -311,6 +315,12 @@ QJsonObject mediaToJson(const MediaRef& m)
     o["hasAudio"] = m.hasAudio;
     o["codec"] = m.codec;
     o["proxyPath"] = m.proxyPath;
+    if (!m.bin.isEmpty()) o["bin"] = m.bin;
+    if (!m.remotionEntry.isEmpty()) {
+        o["remotionEntry"] = m.remotionEntry;
+        o["remotionComposition"] = m.remotionComposition;
+        o["remotionProps"] = m.remotionProps;
+    }
     return o;
 }
 
@@ -330,6 +340,10 @@ MediaRef mediaFromJson(const QJsonObject& o)
     m.hasAudio = o["hasAudio"].toBool();
     m.codec = o["codec"].toString();
     m.proxyPath = o["proxyPath"].toString();
+    m.bin = o["bin"].toString();
+    m.remotionEntry = o["remotionEntry"].toString();
+    m.remotionComposition = o["remotionComposition"].toString();
+    m.remotionProps = o["remotionProps"].toString();
     return m;
 }
 
@@ -343,6 +357,7 @@ bool saveProject(const Project& project, const QString& path, QString* error)
     root["id"] = project.id;
     root["name"] = project.name;
 
+    root["bins"] = QJsonArray::fromStringList(project.bins);
     QJsonArray media;
     for (const auto& m : project.media) media.append(mediaToJson(m));
     root["media"] = media;
@@ -390,6 +405,7 @@ bool loadProject(const QString& path, Project& out, QString* error)
     p.name = root["name"].toString(QStringLiteral("Untitled Project"));
     p.filePath = path;
 
+    for (const auto& v : root["bins"].toArray()) p.bins << v.toString();
     for (const auto& v : root["media"].toArray()) p.media.push_back(mediaFromJson(v.toObject()));
     for (const auto& v : root["sequences"].toArray()) p.sequences.push_back(sequenceFromJson(v.toObject()));
 

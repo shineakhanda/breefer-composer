@@ -4,6 +4,7 @@
 #include "core/EditOps.h"
 #include "core/Evaluate.h"
 #include "core/Project.h"
+#include "io/Inflate.h"
 #include "io/Interchange.h"
 #include "io/ProjectIO.h"
 
@@ -486,6 +487,71 @@ int main(int argc, char** argv)
             CHECK_EQ(back.tracks[v1].clips[1].sourceIn, frames(100));
         }
         CHECK_EQ(back.rate.num, 25);
+    });
+
+    test("nest moves clips into a new sequence and leaves linked nest clips", [] {
+        Fixture f;
+        const QString a = f.addPair(10, 40);
+        const QString b = f.addPair(60, 20, 100);
+        Sequence nested;
+        const QStringList created = edit::nest(f.seq, edit::expandLinks(f.seq, {a, b}), nested, QStringLiteral("Nest 1"));
+        CHECK_EQ(created.size(), 2);
+        CHECK(edit::validate(f.seq));
+        CHECK(edit::validate(nested));
+        CHECK_EQ(f.seq.tracks[f.v1()].clips.size(), 1);
+        const Clip& n = f.clip(f.v1(), 0);
+        CHECK(n.generator == GeneratorKind::Nest);
+        CHECK(n.nestedSequenceId == nested.id);
+        CHECK_EQ(n.start, frames(10));
+        CHECK_EQ(n.duration, frames(70));
+        CHECK(!n.linkId.isEmpty() && n.linkId == f.clip(f.a1(), 0).linkId);
+        const int nv1 = nested.trackForLane(TrackKind::Video, 1);
+        CHECK(nv1 >= 0 && nested.tracks[nv1].clips.size() == 2);
+        if (nv1 >= 0 && nested.tracks[nv1].clips.size() == 2) CHECK_EQ(nested.tracks[nv1].clips[1].start, frames(50));
+    });
+
+    test("gzip/DEFLATE decoder handles stored, fixed and dynamic blocks", [] {
+        // Fixed-Huffman stream for "hello hello hello" (zlib level 1 output, no header).
+        const QByteArray fixed = QByteArray::fromHex("cb48cdc9c957c8409000");
+        QByteArray out;
+        QString error;
+        CHECK(io::inflateRaw(fixed, 0, out, &error));
+        CHECK(out == QByteArray("hello hello hello"));
+        // Stored block.
+        QByteArray stored = QByteArray::fromHex("010500faff") + QByteArray("abcde");
+        CHECK(io::inflateRaw(stored, 0, out, &error));
+        CHECK(out == QByteArray("abcde"));
+    });
+
+    test("Premiere .prproj import follows the object graph", [] {
+        const QString path = QStringLiteral(BC_TEST_DATA "/sample.prproj");
+        QVector<Sequence> sequences;
+        QVector<MediaRef> media;
+        QStringList warnings;
+        QString error;
+        CHECK(io::importPremiereProject(path, sequences, media, &warnings, &error));
+        if (!error.isEmpty()) std::printf("  error: %s\n", qPrintable(error));
+        CHECK_EQ(sequences.size(), 1);
+        if (sequences.isEmpty()) return;
+        const Sequence& s = sequences.first();
+        CHECK(s.name == QStringLiteral("Main Edit"));
+        CHECK_EQ(s.rate.num, 25);
+        CHECK_EQ(s.width, 1920);
+        CHECK_EQ(media.size(), 1);
+        const int v1 = s.trackForLane(TrackKind::Video, 1);
+        const int a1 = s.trackForLane(TrackKind::Audio, 1);
+        CHECK(v1 >= 0 && a1 >= 0);
+        if (v1 < 0 || a1 < 0) return;
+        CHECK_EQ(s.tracks[v1].clips.size(), 2);
+        if (s.tracks[v1].clips.size() == 2) {
+            CHECK_EQ(s.tracks[v1].clips[0].sourceIn, frames(10));
+            CHECK_EQ(s.tracks[v1].clips[1].start, frames(60));
+            CHECK(std::abs(s.tracks[v1].clips[1].speed - 2.0) < 1e-9);
+            CHECK(!s.tracks[v1].clips[0].linkId.isEmpty());
+            CHECK(s.tracks[v1].clips[0].linkId == s.tracks[a1].clips[0].linkId);
+        }
+        CHECK(!warnings.isEmpty());   // the transition is reported
+        CHECK(edit::validate(s));
     });
 
     std::printf("\n%d checks, %d failures\n", g_checks, g_failures);

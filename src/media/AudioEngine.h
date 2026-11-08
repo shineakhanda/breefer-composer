@@ -16,7 +16,8 @@ public:
     bool initialize();
     void shutdown();
 
-    void setSource(const Sequence& sequence, const QVector<MediaRef>& media);
+    void setSource(const Sequence& sequence, const QVector<MediaRef>& media,
+                   const QVector<Sequence>& library = {});
     void play(Tick from);
     void pause();
     void seek(Tick from);

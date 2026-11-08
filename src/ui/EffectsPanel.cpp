@@ -2,6 +2,7 @@
 
 #include "core/Document.h"
 #include "engine/Effects.h"
+#include "engine/PluginHost.h"
 #include "ui/Theme.h"
 
 #include <QLineEdit>
@@ -33,6 +34,7 @@ const EffectEntry kEffects[] = {
     {fx::kFlip, "Horizontal Flip", "Transform"},
     {fx::kLumetri, "Lumetri Color", "Color Correction"},
     {fx::kVignette, "Vignette", "Stylize"},
+    {fx::kBasic3D, "Basic 3D", "Perspective"},
     {fx::kBlur, "Gaussian Blur", "Blur & Sharpen"},
     {fx::kSharpen, "Sharpen", "Blur & Sharpen"},
     {fx::kMask, "Mask (Shape)", "Masking"},
@@ -86,6 +88,20 @@ void EffectsPanel::populate(const QString& filter)
         auto* item = new QListWidgetItem(name, m_list);
         item->setData(Qt::UserRole, QString::fromLatin1(entry.type));
         item->setToolTip(tr("Double-click to apply to the selected clip"));
+    }
+
+    // Native plugin effects.
+    const auto& plugins = PluginHost::instance().effects();
+    if (!plugins.isEmpty()) {
+        auto* header = new QListWidgetItem(tr("PLUGINS"), m_list);
+        header->setFlags(Qt::NoItemFlags);
+        header->setForeground(theme::textDim());
+    }
+    for (const auto& p : plugins) {
+        if (!filter.isEmpty() && !p.name.contains(filter, Qt::CaseInsensitive)) continue;
+        auto* item = new QListWidgetItem(QStringLiteral("%1  (%2)").arg(p.name, p.category), m_list);
+        item->setData(Qt::UserRole, p.type);
+        item->setToolTip(tr("Plugin from %1").arg(p.library));
     }
 }
 

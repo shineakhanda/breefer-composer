@@ -1,163 +1,136 @@
 # Breefer Composer
 
-A free, open-source non-linear video editor for Windows, macOS and Linux, built to stay
-responsive on modest hardware (dual-core / 4-thread, 8 GB RAM, integrated graphics).
+A free, open-source non-linear video editor for Windows, macOS and Linux with a
+Premiere Pro-style workflow, built to stay fast on modest hardware — down to
+2nd–4th generation Intel Core i3/i5 laptops with integrated graphics.
 
 ![Breefer Composer](docs/screenshot.png)
 
-This repository currently contains a **working Windows MVP**: a dockable Qt 6 workspace,
-a multi-track timeline with real trimming, FFmpeg decode and compositing, audio playback,
-undo/redo, project persistence, and timeline interchange export.
+[![Build](https://github.com/breefer/breefer-composer/actions/workflows/build.yml/badge.svg)](.github/workflows/build.yml)
+Licence: GPL-3.0-or-later · C++20 · Qt 6 · FFmpeg
 
 ---
 
-## Interface (Premiere Pro layout)
+## Highlights
 
-- Premiere's Editing workspace on one screen, tuned for **1366x768**: Source / Effect Controls /
-  Lumetri / Mixer / Scopes group, Program monitor, Project / Effects / History / Render Queue
-  group, Tools panel, Timeline with sequence tabs, Audio Meters.
-- Rounded panels on a black gutter, blue outline on the focused panel, panel menus,
-  **` (backtick) maximizes the panel under the cursor**, double-click a tab to maximize.
-- Custom vector icon set (no emoji, no font glyphs) for tools, transport and timeline.
-- Header bar with Import / Edit / Export, Toggle Proxies and Quick Export.
-- Effect Controls with stopwatches, keyframe navigation, keyframe lanes and blue scrubbable
-  values (drag; Shift = x10, Ctrl = fine; click to type).
-- Track headers: source patching (V1/A1), lock, track targeting, sync lock, eye / M / S.
-- Monitors: Fit/zoom, playback resolution Full to 1/16, safe margins, loop, mini timeline.
+**Premiere-style interface** — Source / Program monitors, Project panel with bins, Effect
+Controls with keyframes and scrubbable values, Lumetri Color + Scopes, Audio Track Mixer,
+Tools panel, timeline with sequence tabs. Custom vector icons, focus outline, `` ` `` to
+maximize a panel, tuned for 1366×768 screens.
 
-## Low-end hardware
+**Editing** — linked A/V clips, Selection / Track Select / Ripple / Rolling / Rate Stretch /
+Razor / Slip / Slide / Hand / Zoom tools, sync lock, track targeting, **source patching**,
+three-point editing (`,` `.` `;` `'`), Q/W ripple trims, markers, In/Out, J/K/L shuttle,
+numeric nudge (`+12` Enter), copy/paste/paste-insert, speed/reverse, **nested sequences**,
+**adjustment layers**, unlimited undo with a History panel.
 
-- D3D11VA hardware decoding (Intel / AMD / NVIDIA iGPUs) for H.264, HEVC, VP9, AV1 with
-  software fallback; only displayed frames are copied back from the GPU.
-- Default playback resolution 1/2 (1/4 on dual-thread CPUs) with automatic drop/recover.
-- Thumbnails decode on one low-priority background thread; the timeline repaints only the
-  playhead columns during playback; Effect Controls updates values in place.
-- Automatic 540p MJPEG proxies for anything above 1080p.
+**Effects** — Motion, Opacity, Lumetri Color (with **.cube LUT export**), Crop, Flip,
+Vignette, Blur, Sharpen, Shape Mask, **Basic 3D** (perspective swivel/tilt/distance),
+transitions (dissolve, dips, wipes, push, iris) and constant-power audio crossfades.
 
-## What works today (v0.2)
+**3D workflow** — import OBJ models as clips; animate rotation, scale, camera distance,
+field of view, light direction, ambient and colour from Effect Controls; composite them
+with video. Combine with Basic 3D on any layer for 2.5D moves.
 
-**Editing (Premiere-style)**
-- Linked video/audio clips (Alt-click selects one side, Ctrl+L links/unlinks).
-- Full tool palette: Selection (V), Track Select Forward (A), Ripple (B), Rolling (N),
-  Rate Stretch (R), Razor (C), Slip (Y), Slide (U), Hand (H), Zoom (Z).
-- Multi-select, marquee select, live trim/move preview in the Program monitor.
-- Overwrite and insert moves (Ctrl+drag); lane moves mirror linked audio.
-- Trims are limited by real media handles; ripple edits respect **sync lock** on every track.
-- Three-point editing from the Source monitor: In/Out, Insert (,) / Overwrite (.),
-  Lift (;) / Extract ('), Q/W ripple trims, Add Edit (Ctrl+K / Ctrl+Shift+K).
-- Copy / cut / paste / paste-insert, duplicate, nudge (Alt+arrows), enable/disable,
-  speed/duration with reverse and ripple, clip labels and rename.
-- Track targeting, sync lock, lock, mute, solo, resizable track heights, add/delete tracks.
-- Sequence markers, In/Out range, Match Frame (F), J/K/L shuttle, loop playback.
-- Drag media from the Project panel, the Source monitor, or Explorer onto the timeline.
-- Whole-sequence undo/redo with a **History** panel.
+**Plugins** — native effect plugins through a small C API (C, C++, Rust, Zig…) that appear
+in the Effects panel with keyframeable parameters. See [docs/PLUGINS.md](docs/PLUGINS.md).
 
-**Effects, titles, audio**
-- Transitions: Cross Dissolve, Dip to Black/White, Wipe, Push, Iris; constant-power audio
-  crossfades. Ctrl+D / Ctrl+Shift+D apply defaults; drag a transition to resize it.
-- Motion, Opacity, Lumetri Color, Crop, Flip, Vignette, Gaussian Blur, Sharpen, Shape Mask.
-- Titles (font, stroke, shadow, background box, lower-third preset) and Color Mattes.
-- Clip gain via the yellow rubber band, Volume effect, Audio Track Mixer (fader, pan,
-  mute/solo). Audio is the master clock during playback.
+**React / Remotion** — render Remotion compositions (projects, pre-built bundles or
+"React plugins") with props, as ProRes 4444 with alpha, straight onto the timeline;
+re-render after editing the React code; open Remotion Studio. See
+[docs/REMOTION.md](docs/REMOTION.md).
 
-**Export**
-- H.264 and HEVC (NVENC / Quick Sync / AMF hardware first, software fallback), ProRes 422,
-  DNxHR HQ, VP9, AV1, WAV and AAC audio-only.
-- Presets: YouTube 1080p/4K/720p, Vertical 9:16, Square 1:1, 4:5, masters, audio.
-- In/Out range export, batch **Render Queue**, Export Frame (Ctrl+Shift+E).
+**Premiere Pro projects** — import `.prproj` (sequences, tracks, clips, speed, media paths),
+plus OpenTimelineIO, FCP 7 XML and CMX 3600 EDL import/export.
 
-**Projects and interchange**
-- `.bcproj` JSON (v2, auto-migrates v1), auto-save with crash recovery, recent projects,
-  unsaved-changes prompts, offline-media detection and relinking.
-- Import **and** export: OpenTimelineIO, FCP 7 XML (Premiere/Resolve), CMX 3600 EDL
-  (FCPXML is export-only).
-- Multiple sequences with presets (including vertical and square).
+**Export** — H.264 / HEVC (NVENC, Quick Sync, AMF first, software fallback), ProRes 422,
+DNxHR HQ, VP9, AV1, WAV, AAC; YouTube / vertical / square presets; In/Out ranges; batch
+Render Queue; Export Frame.
 
-**Tested:** `build/breefer_tests.exe` runs 123 headless checks on the edit engine,
-transitions, timecode, project files and interchange round-trips.
+**Low-end hardware** — D3D11VA / VA-API / VideoToolbox hardware decoding with software
+fallback, automatic proxies, adaptive playback resolution (Full → 1/16), async thumbnails,
+partial repaints, and a **Low-end mode** (auto-enabled on ≤4-thread CPUs) for Core
+i3/i5 2nd–4th gen: 1/4 playback, proxies above 720p, no timeline thumbnails.
 
-## Keyboard shortcuts
+---
 
-Press **F1** in the app for the full list. They follow Premiere Pro defaults
-(J/K/L, I/O, `,` `.` `;` `'`, Q/W, Ctrl+K, Ctrl+D, and the tool letters above).
+## Download
 
-## Building (Windows, MinGW)
+Pre-built packages are produced by GitHub Actions for every push and attached to each
+[release](../../releases): Windows installer/ZIP, Linux AppImage, macOS DMG (Apple Silicon).
 
-Tested with **Qt 6.12.0 (mingw_64)**, **MinGW 13.1**, **FFmpeg 9.0.1 (LGPL shared)**,
-CMake 3.31 and Ninja.
+## Building from source
 
-1. Install Qt 6.12 with the *MSVC or MinGW 64-bit* kit and the matching compiler.
-2. Get an **LGPL** shared FFmpeg build (headers + `*.dll.a` + DLLs), for example
-   `ffmpeg-master-latest-win64-lgpl-shared` from BtbN's builds, and place it at
-   `.toolchain/ffmpeg/ffmpeg-master-latest-win64-lgpl-shared/`.
-   The path is configurable: `-DFFMPEG_ROOT=<path>`.
-3. Build:
+Requirements: CMake 3.21+, a C++20 compiler, **Qt 6.9+** (Core, Gui, Widgets),
+**FFmpeg 7.1+** shared libraries (libavcodec 61+).
+
+### Windows (MinGW, as used in CI)
 
 ```powershell
-.\build.ps1            # configure + build
-.\build.ps1 -Run       # build and launch
-```
-
-or manually:
-
-```powershell
-cmake -S . -B build -G Ninja `
-  -DCMAKE_C_COMPILER=C:/Qt/Tools/mingw1310_64/bin/gcc.exe `
-  -DCMAKE_CXX_COMPILER=C:/Qt/Tools/mingw1310_64/bin/g++.exe `
-  -DQT_ROOT=C:/Qt/6.12.0/mingw_64
+# Qt 6.9+ with the MinGW 13 kit; LGPL shared FFmpeg from BtbN's builds
+cmake -S . -B build -G Ninja -DQT_ROOT=C:/Qt/6.12.0/mingw_64 `
+      -DFFMPEG_ROOT=C:/path/to/ffmpeg-master-latest-win64-lgpl-shared
 cmake --build build
+.\build\breefer.exe
 ```
 
-The build stages Qt (`windeployqt`), the platform plugin and the FFmpeg DLLs next to
-`breefer.exe`, so the output directory is self-contained.
+`build.ps1 -Run` does the same with the paths used on the development machine.
 
-A demo project is included: `build\breefer.exe assets\demo.bcproj`.
+### Linux
+
+```bash
+# Qt 6.9+ (aqtinstall or your distro), FFmpeg 7.1+ dev packages or a prebuilt folder
+cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH=$HOME/Qt/6.9.3/gcc_64
+cmake --build build && ./build/breefer
+```
+
+### macOS
+
+```bash
+brew install ffmpeg pkg-config ninja
+cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH=$HOME/Qt/6.9.3/macos -DFFMPEG_ROOT=/nonexistent
+cmake --build build && open "build/Breefer Composer.app"
+```
+
+### Tests and headless rendering
+
+```bash
+./build/breefer_tests                       # 150+ checks: edit engine, transitions, interchange, .prproj
+python tests/data/make_features.py          # sample project: nest + Basic 3D + plugin + 3D model + adjustment layer
+./build/breefer --render-frame tests/data/features.bcproj 1.5 frame.png 640
+```
 
 ---
 
-## Architecture
+## Compatibility notes (honest list)
+
+- **Premiere Pro plugins (.prm / .aex)** cannot be loaded. They target Adobe's proprietary
+  host SDK; no third-party editor can host them. Breefer has its own open plugin API instead.
+- **`.prproj`** import is best-effort: the format is undocumented and changes between
+  versions. Sequences, tracks, clips, speed and media paths come across; effects, keyframes,
+  transitions, graphics and audio levels do not. For the fullest transfer use Premiere's
+  *File › Export › Final Cut Pro XML*. Writing `.prproj` is not supported — Premiere opens
+  Breefer's FCP 7 XML export.
+- **3D** is a CPU renderer (flat-shaded OBJ meshes, painter's-order depth); no textures,
+  glTF or GPU acceleration yet.
+- Rendering is CPU-based (QPainter); heavy stacks at 4K export slowly. Reverse clips are
+  silent; audio at non-100% speed is resampled without pitch correction.
+- Windows builds are tested by hand; Linux and macOS packages are built by CI.
+
+## Project layout
 
 ```
-src/
-  core/     Rational timebase, project graph, command-pattern undo, Document
-  media/    FFmpeg probe + video/audio decoders, frame cache, miniaudio output
-  engine/   Compositor (render thread) + PlaybackEngine (clock, drop policy)
-  io/       Project JSON persistence, EDL / FCP7 / FCPXML / OTIO adapters
-  ui/       Qt Widgets: MainWindow, Timeline, Monitors, MediaBin, EffectControls, Meters
+src/core     timeline model, edit engine, undo, evaluation       (headless, unit-tested)
+src/io       project JSON, OTIO / FCP7 XML / EDL, .prproj, gzip
+src/media    FFmpeg decode, audio engine + mixer, export, proxies, Remotion bridge
+src/engine   compositor, effects, 3D renderer, plugin host, playback engine
+src/ui       Qt Widgets UI (Premiere-style panels)
+sdk/         native plugin C API + sample plugins
+tests/       unit tests and fixtures
+packaging/   Linux desktop entry and icon
 ```
 
-Key invariants:
+## Contributing
 
-- **Time** is integer ticks at 254 016 000 000 Hz, which divides exactly by every common
-  frame rate including 24000/1001, 30000/1001 and 60000/1001.
-- **Tracks** keep clips sorted and non-overlapping, so "what is active at time *t*" is a
-  binary search (`O(log n)`) rather than an interval tree.
-- **The UI thread never decodes.** A `RenderWorker` owns the compositor, every decoder and
-  the frame cache; the UI only posts the newest requested timestamp and receives finished
-  images through a queued signal.
-- **The audio callback never allocates or locks.** It copies from a lock-free SPSC ring
-  buffer; decoding and mixing happen on a separate feeder thread.
-- **Edits are commands.** A track's clip vector is snapshotted before and after a gesture,
-  which makes move/trim/split/ripple correct without bespoke inverse operations.
-
-Design notes and the full rationale live in `docs/`.
-
----
-
-## Known limitations (honest list)
-
-- Rendering is CPU (QPainter); no GPU compositor yet, so heavy effect stacks export slowly at 4K.
-- No nested sequences, adjustment layers, multicam, keyframe graph editor or Bezier masks.
-- Reverse clips are silent; audio at non-100% speed is resampled without pitch correction.
-- No `.prproj` or AAF import; use Premiere's FCP 7 XML or OTIO export instead.
-- No AI features (captions, silence detection) yet.
-- Windows is the only tested platform.
-
-## Roadmap
-
-1. Proxy generation (ProRes Proxy / DNxHR LB) + proxy/original switching.
-2. Audio as the master clock; per-clip gain keyframes.
-3. Color correction + transitions in the compositor.
-4. Cache-aware background render and export.
-5. OpenTimelineIO **import**, then AAF via LibAAF.
-6. ONNX Runtime / whisper.cpp sidecar for captions and silence detection (opt-in).
+See [CONTRIBUTING.md](CONTRIBUTING.md). Licence: [GPL-3.0-or-later](LICENSE); third-party
+components are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

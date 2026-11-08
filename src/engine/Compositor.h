@@ -27,6 +27,9 @@ public:
 
     QImage render(const Sequence& seq, const QVector<MediaRef>& media, Tick time);
 
+    // Every sequence in the project, so nested-sequence clips can be rendered.
+    void setLibrary(const QVector<Sequence>& sequences) { m_library = sequences; }
+
     // Drops every cached decoder and frame (media replaced, proxy switched, ...).
     void invalidate();
 
@@ -45,7 +48,12 @@ private:
                        const Clip& clip, Tick time, QSize& drawSize);
     void drawTitle(QPainter& painter, const Sequence& seq, const Clip& clip);
 
+    QImage renderCanvas(const Sequence& seq, const QVector<MediaRef>& media, Tick time, bool opaque);
+    void applyPixelEffects(QImage& frame, const Clip& clip, Tick local, double scale);
+
     FrameCache m_cache;
+    QVector<Sequence> m_library;
+    int m_nestDepth = 0;
     QHash<QString, VideoDecoder*> m_decoders;   // owned
     QVector<QString> m_decoderOrder;            // LRU, most recent last
     QHash<QString, QImage> m_lastGood;          // per media: last decoded frame (EOF fallback)

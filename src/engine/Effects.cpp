@@ -1,4 +1,5 @@
 #include "engine/Effects.h"
+#include "engine/PluginHost.h"
 
 #include <QFile>
 #include <QTextStream>
@@ -128,6 +129,36 @@ EffectInstance makeVolume()
     return makeEffect(kVolume, "Volume", {makeParam("level", "Level (dB)", 0.0, -60, 15)});
 }
 
+EffectInstance makeBasic3D()
+{
+    return makeEffect(kBasic3D, "Basic 3D",
+                      {
+                          makeParam("swivel", "Swivel", 0.0, -180, 180),
+                          makeParam("tilt", "Tilt", 0.0, -180, 180),
+                          makeParam("distance", "Distance to Image", 0.0, -90, 500),
+                      });
+}
+
+EffectInstance makeModel3D()
+{
+    return makeEffect(kModel3D, "3D Model",
+                      {
+                          makeParam("rotateX", "Rotation X", -15.0, -720, 720),
+                          makeParam("rotateY", "Rotation Y", 30.0, -720, 720),
+                          makeParam("rotateZ", "Rotation Z", 0.0, -720, 720),
+                          makeParam("scale", "Scale", 100.0, 1, 1000),
+                          makeParam("distance", "Camera Distance", 3.0, 1.2, 50),
+                          makeParam("fov", "Field of View", 45.0, 10, 120),
+                          makeParam("lightAzimuth", "Light Azimuth", 45.0, -180, 180),
+                          makeParam("lightElevation", "Light Elevation", 40.0, -90, 90),
+                          makeParam("ambient", "Ambient", 25.0, 0, 100),
+                          makeParam("red", "Color Red", 200.0, 0, 255),
+                          makeParam("green", "Color Green", 200.0, 0, 255),
+                          makeParam("blue", "Color Blue", 210.0, 0, 255),
+                          makeParam("wireframe", "Wireframe (0/1)", 0.0, 0, 1),
+                      });
+}
+
 bool makeByType(const QString& type, EffectInstance& out)
 {
     if (type == QLatin1String(kMotion)) out = makeMotion();
@@ -140,7 +171,15 @@ bool makeByType(const QString& type, EffectInstance& out)
     else if (type == QLatin1String(kFlip)) out = makeFlip();
     else if (type == QLatin1String(kVignette)) out = makeVignette();
     else if (type == QLatin1String(kVolume)) out = makeVolume();
-    else return false;
+    else if (type == QLatin1String(kBasic3D)) out = makeBasic3D();
+    else if (type == QLatin1String(kModel3D)) out = makeModel3D();
+    else if (const PluginHost::Effect* p = PluginHost::instance().find(type)) {
+        out = EffectInstance{};
+        out.id = makeId(QStringLiteral("fx"));
+        out.type = p->type;
+        out.name = p->name;
+        out.params = p->params;
+    } else return false;
     return true;
 }
 

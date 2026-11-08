@@ -109,6 +109,10 @@ bool unlink(Sequence& seq, const QStringList& ids);
 int addTrack(Sequence& seq, TrackKind kind);
 bool removeTrack(Sequence& seq, int trackIndex);
 
+// Moves the clips into `nestedOut` (a new sequence with the same settings and
+// lanes) and replaces them with linked Nest clips. Returns the new clip ids.
+QStringList nest(Sequence& seq, const QStringList& ids, Sequence& nestedOut, const QString& name);
+
 QString addMarker(Sequence& seq, Tick time, const QString& name = QString());
 bool removeMarkerAt(Sequence& seq, Tick time, Tick tolerance);
 

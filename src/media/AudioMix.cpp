@@ -27,7 +27,8 @@ void panGains(double pan, double& left, double& right)
 
 void mixSequenceBlock(const Sequence& seq, Tick blockStart, int frames, float* out,
                       std::vector<float>& scratch, const AudioDecoderLookup& decoders,
-                      std::unordered_map<std::string, Tick>& decoderPos)
+                      std::unordered_map<std::string, Tick>& decoderPos,
+                      const QVector<Sequence>* library, int depth)
 {
     const Tick blockEnd = blockStart + static_cast<Tick>(frames) * kTicksPerSample;
 
@@ -41,7 +42,34 @@ void mixSequenceBlock(const Sequence& seq, Tick blockStart, int frames, float* o
 
         for (int ci = 0; ci < track.clips.size(); ++ci) {
             const Clip& clip = track.clips[ci];
-            if (!clip.enabled || clip.muted || clip.reverse || clip.isGenerator()) continue;
+            if (!clip.enabled || clip.muted) continue;
+
+            if (clip.generator == GeneratorKind::Nest && library && depth < 4) {
+                // Nested sequence audio: mix it into a temporary buffer, then
+                // apply this clip's gain/fades and the track fader.
+                const Sequence* nested = nullptr;
+                for (const auto& candidate : *library)
+                    if (candidate.id == clip.nestedSequenceId) nested = &candidate;
+                if (!nested) continue;
+                const Tick from = std::max(clip.start, blockStart);
+                const Tick to = std::min(clip.end(), blockEnd);
+                if (to <= from) continue;
+                const int offset = static_cast<int>((from - blockStart) / kTicksPerSample);
+                const int count = std::clamp(static_cast<int>((to - from) / kTicksPerSample), 0, frames - offset);
+                if (count <= 0) continue;
+                std::vector<float> nestedMix(static_cast<size_t>(count) * 2, 0.0f);
+                mixSequenceBlock(*nested, clip.sourceTime(from), count, nestedMix.data(), scratch, decoders,
+                                 decoderPos, library, depth + 1);
+                const double g0 = clipAudioGain(track, ci, from) * fader;
+                const double g1 = clipAudioGain(track, ci, from + static_cast<Tick>(count - 1) * kTicksPerSample) * fader;
+                for (int i = 0; i < count; ++i) {
+                    const double g = g0 + (g1 - g0) * (count > 1 ? static_cast<double>(i) / (count - 1) : 0.0);
+                    out[static_cast<size_t>(offset + i) * 2] += static_cast<float>(nestedMix[static_cast<size_t>(i) * 2] * g * panL);
+                    out[static_cast<size_t>(offset + i) * 2 + 1] += static_cast<float>(nestedMix[static_cast<size_t>(i) * 2 + 1] * g * panR);
+                }
+                continue;
+            }
+            if (clip.reverse || clip.isGenerator()) continue;
 
             Tick from = 0;
             Tick to = 0;

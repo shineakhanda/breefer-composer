@@ -33,6 +33,7 @@ class PanelFrame;
 class PanelTabs;
 class PlaybackEngine;
 class ProxyManager;
+class RemotionBridge;
 class RenderQueuePanel;
 class ScopesPanel;
 
@@ -83,11 +84,19 @@ private:
     bool saveProjectAs(bool forceDialog);
     void exportInterchange(const QString& kind);
     void importInterchange();
+    void importInterchangeFile(const QString& path);
     void newSequence();
     void sequenceSettings();
     void newTitle();
     void editTitle(const QString& clipId);
     void newColorMatte();
+    void newAdjustmentLayer();
+    void newModel3D();
+    void newRemotion();
+    void ensureRemotionBridge();
+    void rerenderRemotion(const QString& mediaId);
+    void showPluginManager();
+    void applyLowEndMode(bool on);
     void exportFrame();
 
     void playPauseProgram();
@@ -150,6 +159,10 @@ private:
     QList<QToolButton*> m_modeButtons;
     QToolButton* m_proxyButton = nullptr;
     int m_playbackDivisor = 2;
+    int m_proxyThreshold = 1080;   // proxies for anything taller (720 in low-end mode)
+    bool m_lowEnd = false;
+    RemotionBridge* m_remotion = nullptr;
+    QString m_remotionReplace;     // media id being re-rendered
 
     QTimer* m_meterTimer = nullptr;
     QTimer* m_autosaveTimer = nullptr;

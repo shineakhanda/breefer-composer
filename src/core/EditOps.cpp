@@ -955,6 +955,76 @@ bool removeTrack(Sequence& seq, int ti)
     return true;
 }
 
+QStringList nest(Sequence& seq, const QStringList& ids, Sequence& nestedOut, const QString& name)
+{
+    struct Picked { TrackKind kind; int lane; Clip clip; };
+    QVector<Picked> picked;
+    Tick from = kHuge;
+    Tick to = 0;
+    for (const QString& id : ids) {
+        const Located at = locate(seq, id);
+        if (at.track < 0 || seq.tracks[at.track].locked) continue;
+        const Clip& c = seq.tracks[at.track].clips[at.index];
+        picked.push_back({seq.tracks[at.track].kind, seq.laneOf(at.track), c});
+        from = std::min(from, c.start);
+        to = std::max(to, c.end());
+    }
+    if (picked.isEmpty()) return {};
+
+    nestedOut = Sequence{};
+    nestedOut.id = makeId(QStringLiteral("seq"));
+    nestedOut.name = name;
+    nestedOut.width = seq.width;
+    nestedOut.height = seq.height;
+    nestedOut.rate = seq.rate;
+    int maxV = 1;
+    int maxA = 1;
+    int minV = 1 << 20;
+    int minA = 1 << 20;
+    bool anyV = false;
+    bool anyA = false;
+    for (const auto& p : picked) {
+        if (p.kind == TrackKind::Video) { maxV = std::max(maxV, p.lane); minV = std::min(minV, p.lane); anyV = true; }
+        else { maxA = std::max(maxA, p.lane); minA = std::min(minA, p.lane); anyA = true; }
+    }
+    for (int v = maxV; v >= 1; --v) {
+        Track t; t.kind = TrackKind::Video; t.id = makeId(QStringLiteral("vt")); t.name = QStringLiteral("V%1").arg(v);
+        nestedOut.tracks.push_back(t);
+    }
+    for (int a = 1; a <= maxA; ++a) {
+        Track t; t.kind = TrackKind::Audio; t.id = makeId(QStringLiteral("at")); t.name = QStringLiteral("A%1").arg(a);
+        nestedOut.tracks.push_back(t);
+    }
+    for (auto p : picked) {
+        p.clip.start -= from;
+        nestedOut.tracks[nestedOut.trackForLane(p.kind, p.lane)].clips.push_back(p.clip);
+    }
+    for (auto& t : nestedOut.tracks) t.sortClips();
+    nestedOut.recomputeDuration();
+
+    removeClips(seq, ids, false);
+
+    const QString link = (anyV && anyA) ? makeId(QStringLiteral("link")) : QString();
+    QVector<Placement> placements;
+    QStringList created;
+    auto makeNest = [&](TrackKind kind, int lane) {
+        Clip c;
+        c.id = makeId(QStringLiteral("clip"));
+        c.generator = GeneratorKind::Nest;
+        c.nestedSequenceId = nestedOut.id;
+        c.label = name;
+        c.start = from;
+        c.duration = to - from;
+        c.linkId = link;
+        created << c.id;
+        placements.push_back({seq.trackForLane(kind, lane), c});
+    };
+    if (anyV) makeNest(TrackKind::Video, minV);
+    if (anyA) makeNest(TrackKind::Audio, minA);
+    if (!place(seq, placements, PlaceMode::Overwrite)) return {};
+    return created;
+}
+
 QString addMarker(Sequence& seq, Tick time, const QString& name)
 {
     Marker m;

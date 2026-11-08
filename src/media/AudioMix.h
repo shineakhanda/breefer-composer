@@ -22,7 +22,8 @@ using AudioDecoderLookup = std::function<AudioDecoder*(const QString& clipId, co
 // mixer only seeks when playback jumps.
 void mixSequenceBlock(const Sequence& seq, Tick blockStart, int frames, float* out,
                       std::vector<float>& scratch, const AudioDecoderLookup& decoders,
-                      std::unordered_map<std::string, Tick>& decoderPos);
+                      std::unordered_map<std::string, Tick>& decoderPos,
+                      const QVector<Sequence>* library = nullptr, int depth = 0);
 
 // Constant-power pan law; centre = unity on both sides.
 void panGains(double pan, double& left, double& right);
