@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(BreeferComposer VERSION 0.3.0 LANGUAGES C CXX
+project(BreeferComposer VERSION 0.4.0 LANGUAGES C CXX
         DESCRIPTION "Free, open-source non-linear video editor"
         HOMEPAGE_URL "https://github.com/shineakhanda/breefer-composer")
 
@@ -110,6 +110,8 @@ set(BREEFER_SOURCES
     src/engine/Model3D.cpp
     src/engine/PluginHost.cpp
 
+    src/app/CrashGuard.cpp
+    src/app/SystemInfo.cpp
     src/ui/Theme.cpp
     src/ui/Icons.cpp
     src/ui/ColorPanels.cpp

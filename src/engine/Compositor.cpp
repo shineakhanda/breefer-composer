@@ -38,6 +38,13 @@ void Compositor::invalidate()
 VideoDecoder* Compositor::decoderFor(const MediaRef& ref)
 {
     auto it = m_decoders.find(ref.id);
+    if (it != m_decoders.end() && it.value()->hardwareFailed()) {
+        delete it.value();
+        m_decoders.erase(it);
+        m_decoderOrder.removeOne(ref.id);
+        it = m_decoders.end();
+        m_cache.clear();   // frames decoded around the failure may be bad
+    }
     if (it != m_decoders.end()) {
         m_decoderOrder.removeOne(ref.id);
         m_decoderOrder.push_back(ref.id);

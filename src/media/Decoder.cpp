@@ -225,7 +225,13 @@ QImage VideoDecoder::toImage(AVFrame* frame, int outWidth, int outHeight)
     // GPU surface: copy back only the frame we actually show.
     if (frame->format == kHwFormat) {
         av_frame_unref(m_swFrame);
-        if (av_hwframe_transfer_data(m_swFrame, frame, 0) < 0) return {};
+        if (av_hwframe_transfer_data(m_swFrame, frame, 0) < 0) {
+            // Driver hiccup, device reset or an unsupported surface: stop trusting the GPU path.
+            // Every decoder opened from now on is software, and this one gets reopened.
+            g_hwEnabled = false;
+            m_hwFailed = true;
+            return {};
+        }
         frame = m_swFrame;
     }
 

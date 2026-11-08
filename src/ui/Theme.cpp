@@ -41,6 +41,19 @@ QWidget { color: #e3e3e3; }
 /* ---- panel frames (Premiere: rounded panels on a black gutter) -------- */
 QFrame#PanelFrame { background: #1d1d1d; border: 1px solid #1d1d1d; border-radius: 4px; }
 QFrame#PanelFrame[active="true"] { border: 1px solid #378ef0; }
+QMainWindow::separator { background: #101010; width: 4px; height: 4px; }
+QMainWindow::separator:hover { background: #2a2a2a; }
+QToolBar#HeaderToolBar { background: #101010; border: none; spacing: 0; padding: 0; margin: 0; }
+QWidget#DockTitle { background: #1d1d1d; border-top-left-radius: 4px; border-top-right-radius: 4px; }
+QWidget#DockTitle[compact="true"] { background: #2a2a2a; border-radius: 3px; }
+QDockWidget { color: #f0f0f0; }
+QMainWindow > QTabBar { background: transparent; qproperty-drawBase: 0; }
+QMainWindow > QTabBar::tab {
+    background: #1d1d1d; color: #9b9b9b; border: none; border-top-left-radius: 4px; border-top-right-radius: 4px;
+    padding: 5px 10px 4px 10px; margin: 0 1px 0 0; font-weight: 600;
+}
+QMainWindow > QTabBar::tab:selected { color: #f0f0f0; background: #262626; }
+QMainWindow > QTabBar::tab:hover:!selected { color: #d0d0d0; }
 QSplitter#Gutter::handle { background: #101010; }
 QSplitter#Gutter::handle:horizontal { width: 4px; }
 QSplitter#Gutter::handle:vertical { height: 4px; }

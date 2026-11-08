@@ -2,6 +2,7 @@
 
 #include "ui/Icons.h"
 
+#include <QDockWidget>
 #include <QFrame>
 #include <QTabWidget>
 #include <QToolButton>
@@ -43,6 +44,37 @@ signals:
 
 private:
     std::function<void(int, QMenu*)> m_provider;
+};
+
+// A panel that can be dragged anywhere, tabbed with other panels, split beside them or torn off
+// into its own window (also on a second monitor). Wraps the content in a PanelFrame so the focused
+// panel is outlined, as in Premiere.
+class DockPanel : public QDockWidget {
+    Q_OBJECT
+
+public:
+    DockPanel(const QString& id, const QString& title, QWidget* content, QWidget* parent = nullptr);
+    QWidget* content() const { return m_content; }
+    PanelFrame* frame() const { return m_frame; }
+    void setMenuProvider(std::function<void(QMenu*)> provider) { m_provider = std::move(provider); }
+    // Thin grip instead of a title row, for narrow panels (Tools, meters) and the timeline.
+    void setCompact(bool compact);
+    void setTitle(const QString& title);
+    // In a tab group the tab already names the panel, so the title row shrinks to the menu button.
+    void setTabbed(bool tabbed);
+
+signals:
+    void maximizeRequested();
+
+private:
+    QWidget* m_content;
+    PanelFrame* m_frame;
+    QWidget* m_titleBar = nullptr;
+    QLabel* m_titleLabel = nullptr;
+    QToolButton* m_menuButton = nullptr;
+    std::function<void(QMenu*)> m_provider;
+    bool m_compact = false;
+    bool m_tabbed = false;
 };
 
 // Flat icon button (Premiere style). Checkable buttons turn blue when on.

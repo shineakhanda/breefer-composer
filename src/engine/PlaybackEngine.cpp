@@ -1,3 +1,5 @@
+#include <exception>
+#include <new>
 #include "engine/PlaybackEngine.h"
 
 #include <QTimer>
@@ -46,6 +48,20 @@ void RenderWorker::invalidate()
     m_wake.wakeOne();
 }
 
+void RenderWorker::setCacheBudgetKB(int kb)
+{
+    QMutexLocker lock(&m_mutex);
+    m_cacheBudgetKB = kb;
+    m_wake.wakeOne();
+}
+
+void RenderWorker::trimCaches()
+{
+    QMutexLocker lock(&m_mutex);
+    m_trim = true;
+    m_wake.wakeOne();
+}
+
 void RenderWorker::stop()
 {
     QMutexLocker lock(&m_mutex);
@@ -61,9 +77,21 @@ void RenderWorker::run()
     m_quit = false;
 
     while (!m_quit) {
-        while (!m_quit && !m_pending && !m_invalidate)
+        while (!m_quit && !m_pending && !m_invalidate && !m_trim && m_cacheBudgetKB == 0)
             m_wake.wait(&m_mutex);
         if (m_quit) break;
+
+        if (m_cacheBudgetKB > 0 || m_trim) {
+            const int budget = m_cacheBudgetKB;
+            const bool trim = m_trim;
+            m_cacheBudgetKB = 0;
+            m_trim = false;
+            lock.unlock();
+            if (budget > 0) m_compositor.cache().setBudgetKB(budget);
+            if (trim) m_compositor.cache().clear();
+            lock.relock();
+            if (!m_pending && !m_invalidate) continue;
+        }
 
         if (m_invalidate) {
             m_invalidate = false;
@@ -90,7 +118,23 @@ void RenderWorker::run()
         m_compositor.setPreviewSize(width, height);
         m_compositor.setHighQuality(hq);
         m_compositor.setLibrary(library);
-        QImage image = m_compositor.render(seq, media, time);
+        QImage image;
+        try {
+            image = m_compositor.render(seq, media, time);
+        } catch (const std::exception&) {
+            // A bad frame (corrupt media, out of memory, plugin fault) must not take the editor down:
+            // show a black frame and keep going. Drop the caches in case they were the cause.
+            m_compositor.invalidate();
+            image = QImage(width, height, QImage::Format_ARGB32_Premultiplied);
+            image.fill(Qt::black);
+        } catch (...) {
+            image = QImage(width, height, QImage::Format_ARGB32_Premultiplied);
+            image.fill(Qt::black);
+        }
+        if (image.isNull()) {
+            image = QImage(width, height, QImage::Format_ARGB32_Premultiplied);
+            image.fill(Qt::black);
+        }
         ++m_rendered;
 
         emit frameReady(image, time);

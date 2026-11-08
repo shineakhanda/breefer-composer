@@ -27,6 +27,8 @@ public:
     void close();
     bool isOpen() const { return m_ctx != nullptr; }
     bool isHardware() const { return m_hw; }
+    // True once the GPU path produced bad frames; the owner should reopen in software.
+    bool hardwareFailed() const { return m_hwFailed; }
 
     // Global switch (Preferences). Hardware decode uses D3D11VA on Windows and
     // falls back to software per file when the GPU cannot handle the codec.
@@ -53,6 +55,7 @@ private:
     AVFrame* m_swFrame = nullptr;
     SwsContext* m_sws = nullptr;
     bool m_hw = false;
+    bool m_hwFailed = false;
     int m_stream = -1;
     int m_width = 0;
     int m_height = 0;

@@ -29,8 +29,8 @@ class HistoryPanel;
 class LumetriPanel;
 class MediaBin;
 class MonitorWidget;
+class DockPanel;
 class PanelFrame;
-class PanelTabs;
 class PlaybackEngine;
 class ProxyManager;
 class RemotionBridge;
@@ -45,10 +45,12 @@ public:
     ~MainWindow() override;
 
     bool openProjectFile(const QString& path);
+    void reportPreviousCrash(const QString& reportPath);
     void createProject(const QString& name, const QString& folder);
 
 protected:
     void closeEvent(QCloseEvent* event) override;
+    bool event(QEvent* e) override;
 
 private:
     void buildUi();
@@ -69,8 +71,19 @@ private:
     void refreshSequenceCombo();
     void applyWorkspace(int index);
     void raisePanel(QWidget* panel);
-    void toggleMaximize(PanelFrame* frame);
-    PanelFrame* frameUnderCursor() const;
+    void toggleMaximize(DockPanel* dock);
+    DockPanel* dockUnderCursor() const;
+    DockPanel* addDock(const QString& id, const QString& title, QWidget* content);
+    DockPanel* dockFor(QWidget* content) const;
+    void applyDefaultLayout();
+    void updateDockTitles();
+    void saveCurrentWorkspace();
+    void rebuildWorkspaceMenu(QMenu* menu);
+    void setPanelsLocked(bool locked);
+    void fitToScreen();
+    void governMemory();
+    static QString recoveryPath();
+    void showSystemInfo();
     QWidget* buildToolsPanel();
     QWidget* buildHeaderBar();
     QWidget* buildTimelinePanel();
@@ -140,21 +153,26 @@ private:
     HistoryPanel* m_history = nullptr;
     RenderQueuePanel* m_queue = nullptr;
 
-    // Premiere layout: panel groups in gutter splitters.
-    QSplitter* m_vSplit = nullptr;
-    QSplitter* m_topSplit = nullptr;
-    QSplitter* m_bottomSplit = nullptr;
-    PanelTabs* m_upperLeft = nullptr;     // Source, Effect Controls, Lumetri, Mixer, Scopes
-    PanelTabs* m_programTabs = nullptr;
-    PanelTabs* m_lowerLeft = nullptr;     // Project, Effects, History, Render Queue
-    PanelFrame* m_upperLeftFrame = nullptr;
-    PanelFrame* m_programFrame = nullptr;
-    PanelFrame* m_lowerLeftFrame = nullptr;
-    PanelFrame* m_toolsFrame = nullptr;
-    PanelFrame* m_timelineFrame = nullptr;
-    PanelFrame* m_metersFrame = nullptr;
+    // Premiere layout: every panel is a dock that can be moved, tabbed, split or floated.
+    QList<DockPanel*> m_docks;
+    DockPanel* m_dockSource = nullptr;
+    DockPanel* m_dockEffectControls = nullptr;
+    DockPanel* m_dockLumetri = nullptr;
+    DockPanel* m_dockMixer = nullptr;
+    DockPanel* m_dockScopes = nullptr;
+    DockPanel* m_dockProgram = nullptr;
+    DockPanel* m_dockProject = nullptr;
+    DockPanel* m_dockEffects = nullptr;
+    DockPanel* m_dockHistory = nullptr;
+    DockPanel* m_dockQueue = nullptr;
+    DockPanel* m_dockTools = nullptr;
+    DockPanel* m_dockTimeline = nullptr;
+    DockPanel* m_dockMeters = nullptr;
     QList<PanelFrame*> m_frames;
-    PanelFrame* m_maximized = nullptr;
+    DockPanel* m_maximized = nullptr;
+    QByteArray m_preMaximizeState;
+    bool m_panelsLocked = false;
+    bool m_titleUpdatePending = false;
     QTabBar* m_sequenceTabs = nullptr;
     QList<QToolButton*> m_modeButtons;
     QToolButton* m_proxyButton = nullptr;
@@ -166,6 +184,9 @@ private:
 
     QTimer* m_meterTimer = nullptr;
     QTimer* m_autosaveTimer = nullptr;
+    QTimer* m_memoryTimer = nullptr;
+    int m_lastCacheBudgetKB = 0;
+    bool m_lowMemoryNoted = false;
     QComboBox* m_qualityCombo = nullptr;
     QComboBox* m_sequenceCombo = nullptr;
     QTabBar* m_workspaceTabs = nullptr;

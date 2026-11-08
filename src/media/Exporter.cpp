@@ -1,3 +1,5 @@
+#include <exception>
+#include <new>
 #include "media/Exporter.h"
 
 #include "engine/Compositor.h"
@@ -41,10 +43,10 @@ QStringList encoderCandidates(const QString& codec, bool hardware)
 {
     QStringList list;
     if (codec == QLatin1String("h264")) {
-        if (hardware) list << "h264_nvenc" << "h264_qsv" << "h264_amf" << "h264_mf";
+        if (hardware) list << "h264_nvenc" << "h264_qsv" << "h264_amf" << "h264_videotoolbox" << "h264_mf";
         list << "libopenh264" << "h264_mf";
     } else if (codec == QLatin1String("hevc")) {
-        if (hardware) list << "hevc_nvenc" << "hevc_qsv" << "hevc_amf";
+        if (hardware) list << "hevc_nvenc" << "hevc_qsv" << "hevc_amf" << "hevc_videotoolbox";
         list << "hevc_mf" << "libkvazaar";
     } else if (codec == QLatin1String("prores")) {
         list << "prores_ks" << "prores";
@@ -250,7 +252,17 @@ protected:
                                                       : job.settings.label,
                          remaining);
             QString error;
-            if (exportSequence(job, &error))
+            bool ok = false;
+            try {
+                ok = exportSequence(job, &error);
+            } catch (const std::bad_alloc&) {
+                error = tr("Out of memory while exporting. Lower the resolution, close other apps, or turn on low-end mode.");
+            } catch (const std::exception& e) {
+                error = tr("Export stopped by an internal error: %1").arg(QString::fromUtf8(e.what()));
+            } catch (...) {
+                error = tr("Export stopped by an unknown internal error.");
+            }
+            if (ok)
                 emit finished(job.settings.outputPath);
             else
                 emit failed(error);

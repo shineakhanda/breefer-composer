@@ -30,6 +30,8 @@ public:
     void setPreviewHeight(int height);
     void request(Tick time, bool highQuality = false);
     void invalidate();   // drop decoders + cache on the render thread
+    void setCacheBudgetKB(int kb);
+    void trimCaches();   // free memory now (low-RAM situations)
     void stop();
 
     int renderedCount() const { return m_rendered.load(); }
@@ -49,6 +51,8 @@ private:
     std::optional<Tick> m_pending;
     bool m_pendingHq = false;
     bool m_invalidate = false;
+    bool m_trim = false;
+    int m_cacheBudgetKB = 0;   // 0 = leave the default
     int m_previewHeight = 540;
     bool m_quit = false;
     std::atomic<int> m_rendered{0};
@@ -70,6 +74,8 @@ public:
     void pause();
     void seek(Tick time);
     void invalidate();
+    void setCacheBudgetKB(int kb) { m_worker->setCacheBudgetKB(kb); }
+    void trimCaches() { m_worker->trimCaches(); }
 
     // Shuttle speed (J/K/L): negative plays backwards. 1.0 = normal.
     void setSpeed(double speed);

@@ -11,6 +11,8 @@
 #include "media/ProxyManager.h"
 #include "media/RemotionBridge.h"
 #include "engine/PluginHost.h"
+#include "app/CrashGuard.h"
+#include "app/SystemInfo.h"
 #include "ui/AudioMeters.h"
 #include "ui/ColorPanels.h"
 #include "ui/Dialogs.h"
@@ -24,6 +26,12 @@
 #include "ui/Widgets.h"
 #include "media/Decoder.h"
 
+#include <QEvent>
+#include <QClipboard>
+#include <QGuiApplication>
+#include <QWindow>
+#include <QScreen>
+#include <QInputDialog>
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
@@ -101,9 +109,12 @@ MainWindow::MainWindow(QWidget* parent)
 
     m_autosaveTimer = new QTimer(this);
     connect(m_autosaveTimer, &QTimer::timeout, this, [this] {
-        if (m_currentFile.isEmpty() || !m_document->isDirty()) return;
+        if (!m_document->isDirty()) return;
         QString ignored;
-        if (m_document->save(m_currentFile + QStringLiteral(".autosave"), &ignored)) showStatus(tr("Auto-saved"));
+        // A project that was never saved still gets protected, in the app's recovery folder.
+        const QString target = m_currentFile.isEmpty() ? recoveryPath() : m_currentFile + QStringLiteral(".autosave");
+        if (m_currentFile.isEmpty()) QDir().mkpath(QFileInfo(target).absolutePath());
+        if (m_document->save(target, &ignored)) showStatus(tr("Auto-saved"));
     });
     {
         QSettings settings = appSettings();
@@ -129,14 +140,22 @@ MainWindow::MainWindow(QWidget* parent)
     wire();
 
     QSettings settings = appSettings();
-    if (settings.contains(QStringLiteral("geometry.v4"))) {
-        restoreGeometry(settings.value(QStringLiteral("geometry.v4")).toByteArray());
-        m_vSplit->restoreState(settings.value(QStringLiteral("split.v")).toByteArray());
-        m_topSplit->restoreState(settings.value(QStringLiteral("split.top")).toByteArray());
-        m_bottomSplit->restoreState(settings.value(QStringLiteral("split.bottom")).toByteArray());
+    if (settings.contains(QStringLiteral("geometry.v5"))) {
+        restoreGeometry(settings.value(QStringLiteral("geometry.v5")).toByteArray());
+        bool restored = false;
+        if (settings.contains(QStringLiteral("dockState.v1")))
+            restored = restoreState(settings.value(QStringLiteral("dockState.v1")).toByteArray(), 1);
+        // A corrupt or hand-edited layout must never leave the user with an empty window.
+        bool anyVisible = false;
+        for (DockPanel* d : m_docks) anyVisible = anyVisible || !d->isHidden();
+        if (restored && (!anyVisible || m_dockTimeline->isHidden() || m_dockProgram->isHidden())) restored = false;
+        if (!restored) applyDefaultLayout();
+        m_panelsLocked = settings.value(QStringLiteral("panelsLocked"), false).toBool();
+        if (m_panelsLocked) setPanelsLocked(true);
     } else {
         setWindowState(Qt::WindowMaximized);
     }
+    fitToScreen();
     setPlaybackDivisor(m_playbackDivisor);
     {
         // Old dual/quad-thread CPUs (Core i3/i5 2nd-4th gen) start in low-end mode.
@@ -148,6 +167,11 @@ MainWindow::MainWindow(QWidget* parent)
         const int frames = settings.value(QStringLiteral("defaultTransitionFrames"), 25).toInt();
         m_timeline->setDefaultTransitionFrames(frames);
     }
+
+    m_memoryTimer = new QTimer(this);
+    connect(m_memoryTimer, &QTimer::timeout, this, &MainWindow::governMemory);
+    m_memoryTimer->start(3000);
+    governMemory();
 
     syncEngineSources();
     refreshTitle();
@@ -180,115 +204,76 @@ void MainWindow::buildUi()
     m_queue = new RenderQueuePanel(m_exporter);
     m_meters = new AudioMeters;
 
-    auto frame = [this](QWidget* content) {
-        auto* f = new PanelFrame(content);
-        m_frames << f;
-        return f;
-    };
-    auto group = [this](PanelTabs*& tabs) {
-        tabs = new PanelTabs;
-        connect(tabs, &PanelTabs::maximizeRequested, this, [this, tabs] {
-            toggleMaximize(qobject_cast<PanelFrame*>(tabs->parentWidget()));
-        });
-        return tabs;
-    };
-
-    // Upper left: Source / Effect Controls / Lumetri Color / Audio Track Mixer / Lumetri Scopes.
-    group(m_upperLeft);
-    m_upperLeft->addPanel(m_sourceMonitor, tr("Source: (no clips)"));
-    m_upperLeft->addPanel(m_effectControls, tr("Effect Controls"));
-    m_upperLeft->addPanel(m_lumetri, tr("Lumetri Color"));
-    m_upperLeft->addPanel(m_mixer, tr("Audio Track Mixer"));
-    m_upperLeft->addPanel(m_scopes, tr("Lumetri Scopes"));
-    m_upperLeft->setMenuProvider([this](int index, QMenu* menu) {
-        if (m_upperLeft->widget(index) == m_scopes) {
-            menu->addAction(tr("Waveform (Luma)"), this, [this] { m_scopes->setMode(0); });
-            menu->addAction(tr("RGB Parade"), this, [this] { m_scopes->setMode(1); });
-            menu->addAction(tr("Vectorscope YUV"), this, [this] { m_scopes->setMode(2); });
-        } else if (m_upperLeft->widget(index) == m_sourceMonitor) {
-            menu->addAction(tr("Close Source Clip"), this, [this] {
-                m_sourceMediaId.clear();
-                m_sourceMonitor->clearImage();
-                m_upperLeft->setTabText(0, tr("Source: (no clips)"));
-            });
-        }
+    // Source / Effect Controls / Lumetri / Mixer / Scopes share the upper-left group by default;
+    // Project / Effects / History / Render Queue share the lower-left group. All of them can be
+    // dragged out, re-tabbed, split or floated.
+    m_dockSource = addDock(QStringLiteral("source"), tr("Source: (no clips)"), m_sourceMonitor);
+    m_dockEffectControls = addDock(QStringLiteral("effectControls"), tr("Effect Controls"), m_effectControls);
+    m_dockLumetri = addDock(QStringLiteral("lumetri"), tr("Lumetri Color"), m_lumetri);
+    m_dockMixer = addDock(QStringLiteral("mixer"), tr("Audio Track Mixer"), m_mixer);
+    m_dockScopes = addDock(QStringLiteral("scopes"), tr("Lumetri Scopes"), m_scopes);
+    m_dockScopes->setMenuProvider([this](QMenu* menu) {
+        menu->addAction(tr("Waveform (Luma)"), this, [this] { m_scopes->setMode(0); });
+        menu->addAction(tr("RGB Parade"), this, [this] { m_scopes->setMode(1); });
+        menu->addAction(tr("Vectorscope YUV"), this, [this] { m_scopes->setMode(2); });
     });
-    m_upperLeftFrame = frame(m_upperLeft);
+    m_dockSource->setMenuProvider([this](QMenu* menu) {
+        menu->addAction(tr("Close Source Clip"), this, [this] {
+            m_sourceMediaId.clear();
+            m_sourceMonitor->clearImage();
+            m_dockSource->setTitle(tr("Source: (no clips)"));
+        });
+    });
 
-    group(m_programTabs);
-    m_programTabs->addPanel(m_programMonitor, tr("Program"));
-    m_programTabs->setMenuProvider([this](int, QMenu* menu) {
+    m_dockProgram = addDock(QStringLiteral("program"), tr("Program"), m_programMonitor);
+    m_dockProgram->setMenuProvider([this](QMenu* menu) {
         QAction* safe = menu->addAction(tr("Safe Margins"), this, [this](bool on) { m_programMonitor->setSafeMargins(on); });
         safe->setCheckable(true);
         safe->setChecked(m_programMonitor->safeMargins());
         menu->addAction(tr("Export Frame..."), this, &MainWindow::exportFrame);
     });
-    m_programFrame = frame(m_programTabs);
 
-    // Lower left: Project / Effects / History / Render Queue.
-    group(m_lowerLeft);
-    m_lowerLeft->addPanel(m_mediaBin, tr("Project"));
-    m_lowerLeft->addPanel(m_effects, tr("Effects"));
-    m_lowerLeft->addPanel(m_history, tr("History"));
-    m_lowerLeft->addPanel(m_queue, tr("Render Queue"));
-    m_lowerLeft->setMenuProvider([this](int index, QMenu* menu) {
-        if (m_lowerLeft->widget(index) == m_mediaBin) {
-            menu->addAction(tr("Import..."), m_mediaBin, &MediaBin::importFiles);
-            menu->addAction(tr("Import Folder..."), m_mediaBin, &MediaBin::importFolder);
-            menu->addAction(tr("New Sequence..."), this, &MainWindow::newSequence);
-        }
+    m_dockProject = addDock(QStringLiteral("project"), tr("Project"), m_mediaBin);
+    m_dockEffects = addDock(QStringLiteral("effects"), tr("Effects"), m_effects);
+    m_dockHistory = addDock(QStringLiteral("history"), tr("History"), m_history);
+    m_dockQueue = addDock(QStringLiteral("queue"), tr("Render Queue"), m_queue);
+    m_dockProject->setMenuProvider([this](QMenu* menu) {
+        menu->addAction(tr("Import..."), m_mediaBin, &MediaBin::importFiles);
+        menu->addAction(tr("Import Folder..."), m_mediaBin, &MediaBin::importFolder);
+        menu->addAction(tr("New Sequence..."), this, &MainWindow::newSequence);
     });
-    m_lowerLeftFrame = frame(m_lowerLeft);
 
-    m_toolsFrame = frame(buildToolsPanel());
-    m_timelineFrame = frame(buildTimelinePanel());
-    m_metersFrame = frame(m_meters);
+    m_dockTools = addDock(QStringLiteral("tools"), tr("Tools"), buildToolsPanel());
+    m_dockTools->setCompact(true);
+    m_dockTimeline = addDock(QStringLiteral("timeline"), tr("Timeline"), buildTimelinePanel());
+    m_dockTimeline->setCompact(true);   // the sequence tab row is its title
+    m_dockMeters = addDock(QStringLiteral("meters"), tr("Audio Meters"), m_meters);
+    m_dockMeters->setCompact(true);
     m_meters->setMinimumWidth(42);
 
-    m_topSplit = new QSplitter(Qt::Horizontal);
-    m_topSplit->setObjectName(QStringLiteral("Gutter"));
-    m_topSplit->setHandleWidth(4);
-    m_topSplit->setChildrenCollapsible(false);
-    m_topSplit->addWidget(m_upperLeftFrame);
-    m_topSplit->addWidget(m_programFrame);
-    m_topSplit->setStretchFactor(0, 1);
-    m_topSplit->setStretchFactor(1, 1);
-
-    m_bottomSplit = new QSplitter(Qt::Horizontal);
-    m_bottomSplit->setObjectName(QStringLiteral("Gutter"));
-    m_bottomSplit->setHandleWidth(4);
-    m_bottomSplit->setChildrenCollapsible(false);
-    m_bottomSplit->addWidget(m_lowerLeftFrame);
-    m_bottomSplit->addWidget(m_toolsFrame);
-    m_bottomSplit->addWidget(m_timelineFrame);
-    m_bottomSplit->addWidget(m_metersFrame);
-    m_bottomSplit->setStretchFactor(0, 0);
-    m_bottomSplit->setStretchFactor(1, 0);
-    m_bottomSplit->setStretchFactor(2, 1);
-    m_bottomSplit->setStretchFactor(3, 0);
-
-    m_vSplit = new QSplitter(Qt::Vertical);
-    m_vSplit->setObjectName(QStringLiteral("Gutter"));
-    m_vSplit->setHandleWidth(4);
-    m_vSplit->setChildrenCollapsible(false);
-    m_vSplit->addWidget(m_topSplit);
-    m_vSplit->addWidget(m_bottomSplit);
-    m_vSplit->setStretchFactor(0, 5);
-    m_vSplit->setStretchFactor(1, 4);
-
+    // The docks fill the whole window: the central widget is only a placeholder.
     auto* central = new QWidget(this);
-    central->setObjectName(QStringLiteral("HeaderBar"));
-    auto* layout = new QVBoxLayout(central);
-    layout->setContentsMargins(4, 0, 4, 4);
-    layout->setSpacing(4);
-    layout->addWidget(buildHeaderBar());
-    layout->addWidget(m_vSplit, 1);
     setCentralWidget(central);
+    central->hide();
+    setDockNestingEnabled(true);
+    setDockOptions(AllowNestedDocks | AllowTabbedDocks | AnimatedDocks | GroupedDragging);
+    setTabPosition(Qt::AllDockWidgetAreas, QTabWidget::North);
+    setCorner(Qt::TopLeftCorner, Qt::TopDockWidgetArea);
+    setCorner(Qt::TopRightCorner, Qt::TopDockWidgetArea);
+    setCorner(Qt::BottomLeftCorner, Qt::BottomDockWidgetArea);
+    setCorner(Qt::BottomRightCorner, Qt::BottomDockWidgetArea);
 
-    // Default proportions tuned for 1366x768.
-    m_topSplit->setSizes({560, 780});
-    m_bottomSplit->setSizes({300, 34, 960, 46});
-    m_vSplit->setSizes({390, 320});
+    auto* header = addToolBar(tr("Header"));
+    header->setObjectName(QStringLiteral("HeaderToolBar"));
+    header->setMovable(false);
+    header->setFloatable(false);
+    header->setContentsMargins(4, 0, 4, 0);
+    header->addWidget(buildHeaderBar());
+    header->setContextMenuPolicy(Qt::PreventContextMenu);
+    if (auto* bar = qobject_cast<QWidget*>(header->widgetForAction(header->actions().first())))
+        bar->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+
+    applyDefaultLayout();
 
     // Premiere outlines the panel that has focus.
     connect(qApp, &QApplication::focusChanged, this, [this](QWidget*, QWidget* now) {
@@ -448,7 +433,7 @@ QWidget* MainWindow::buildTimelinePanel()
         m_document->setSequence(m_sequenceTabs->tabData(index).toString());
         QTimer::singleShot(0, m_timeline, &TimelineWidget::zoomToFit);
     });
-    connect(m_sequenceTabs, &QTabBar::tabBarDoubleClicked, this, [this](int) { toggleMaximize(m_timelineFrame); });
+    connect(m_sequenceTabs, &QTabBar::tabBarDoubleClicked, this, [this](int) { toggleMaximize(m_dockTimeline); });
     row->addWidget(m_sequenceTabs, 1);
 
     auto* menuButton = iconButton(icons::Id::Hamburger, tr("Panel menu"), top, false, 16);
@@ -461,7 +446,7 @@ QWidget* MainWindow::buildTimelinePanel()
     menu->addAction(tr("Add Audio Track"), this, [this] { m_timeline->addTrack(true); });
     menu->addAction(tr("Close Gaps"), m_timeline, &TimelineWidget::closeAllGaps);
     menu->addSeparator();
-    menu->addAction(tr("Maximize Frame  (`)"), this, [this] { toggleMaximize(m_timelineFrame); });
+    menu->addAction(tr("Maximize Frame  (`)"), this, [this] { toggleMaximize(m_dockTimeline); });
     menuButton->setMenu(menu);
     row->addWidget(menuButton);
     col->addWidget(top);
@@ -469,39 +454,217 @@ QWidget* MainWindow::buildTimelinePanel()
     return panel;
 }
 
-void MainWindow::raisePanel(QWidget* panel)
+DockPanel* MainWindow::addDock(const QString& id, const QString& title, QWidget* content)
 {
-    if (m_maximized) toggleMaximize(m_maximized);
-    for (PanelTabs* tabs : {m_upperLeft, m_programTabs, m_lowerLeft}) {
-        if (tabs->indexOf(panel) >= 0) {
-            tabs->raisePanel(panel);
-            return;
-        }
-    }
+    auto* dock = new DockPanel(id, title, content, this);
+    connect(dock, &DockPanel::maximizeRequested, this, [this, dock] { toggleMaximize(dock); });
+    m_docks << dock;
+    m_frames << dock->frame();
+    return dock;
 }
 
-PanelFrame* MainWindow::frameUnderCursor() const
+void MainWindow::updateDockTitles()
 {
-    for (QWidget* w = QApplication::widgetAt(QCursor::pos()); w; w = w->parentWidget())
-        if (auto* f = qobject_cast<PanelFrame*>(w)) return f;
+    for (DockPanel* d : m_docks) d->setTabbed(!d->isFloating() && !tabifiedDockWidgets(d).isEmpty());
+}
+
+bool MainWindow::event(QEvent* e)
+{
+    if (e->type() == QEvent::LayoutRequest && !m_titleUpdatePending) {
+        m_titleUpdatePending = true;
+        QTimer::singleShot(0, this, [this] {
+            m_titleUpdatePending = false;
+            updateDockTitles();
+        });
+    }
+    return QMainWindow::event(e);
+}
+
+DockPanel* MainWindow::dockFor(QWidget* content) const
+{
+    for (DockPanel* d : m_docks)
+        if (d->content() == content) return d;
     return nullptr;
 }
 
-void MainWindow::toggleMaximize(PanelFrame* frame)
+void MainWindow::raisePanel(QWidget* panel)
 {
-    if (!frame) return;
+    if (m_maximized) toggleMaximize(m_maximized);
+    DockPanel* d = dockFor(panel);
+    if (!d) return;
+    if (d->isHidden()) d->show();   // a closed panel comes back where it was
+    d->raise();                     // selects its tab when it shares a group
+}
+
+DockPanel* MainWindow::dockUnderCursor() const
+{
+    for (QWidget* w = QApplication::widgetAt(QCursor::pos()); w; w = w->parentWidget())
+        if (auto* d = qobject_cast<DockPanel*>(w)) return d;
+    return nullptr;
+}
+
+void MainWindow::toggleMaximize(DockPanel* dock)
+{
+    if (!dock) return;
     if (m_maximized) {
-        for (PanelFrame* f : m_frames) f->show();
-        m_topSplit->show();
-        m_bottomSplit->show();
+        restoreState(m_preMaximizeState, 1);
         m_maximized = nullptr;
         return;
     }
-    m_maximized = frame;
-    for (PanelFrame* f : m_frames) f->setVisible(f == frame);
-    const bool inTop = m_topSplit->indexOf(frame) >= 0;
-    m_topSplit->setVisible(inTop);
-    m_bottomSplit->setVisible(!inTop);
+    m_preMaximizeState = saveState(1);
+    m_maximized = dock;
+    for (DockPanel* d : m_docks)
+        if (d != dock) d->hide();
+    dock->show();
+    dock->raise();
+}
+
+void MainWindow::setPanelsLocked(bool locked)
+{
+    m_panelsLocked = locked;
+    for (DockPanel* d : m_docks) {
+        d->setFeatures(locked ? QDockWidget::DockWidgetClosable
+                              : (QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetMovable
+                                 | QDockWidget::DockWidgetFloatable));
+    }
+    appSettings().setValue(QStringLiteral("panelsLocked"), locked);
+}
+
+// Keeps the window usable on 1024x600 netbooks and old MacBooks: never larger than the screen
+// it opens on, and panels shrink instead of pushing the window off-screen.
+void MainWindow::fitToScreen()
+{
+    const QScreen* screen = (windowHandle() && windowHandle()->screen()) ? windowHandle()->screen()
+                                                                         : QGuiApplication::primaryScreen();
+    if (!screen) return;
+    const QRect avail = screen->availableGeometry();
+    setMinimumSize(std::min(800, avail.width()), std::min(520, avail.height()));
+    if (width() > avail.width() || height() > avail.height())
+        resize(std::min(width(), avail.width()), std::min(height(), avail.height()));
+    if (!avail.intersects(frameGeometry())) move(avail.topLeft());
+}
+
+void MainWindow::applyDefaultLayout()
+{
+    m_maximized = nullptr;
+    for (DockPanel* d : m_docks) {
+        d->setFloating(false);
+        removeDockWidget(d);
+    }
+    // Qt only splits docks that are visible, so each one is shown as soon as it is placed.
+    // Upper row: Source group | Program.
+    addDockWidget(Qt::TopDockWidgetArea, m_dockSource);
+    m_dockSource->show();
+    addDockWidget(Qt::TopDockWidgetArea, m_dockProgram);
+    m_dockProgram->show();
+    splitDockWidget(m_dockSource, m_dockProgram, Qt::Horizontal);
+    for (DockPanel* d : {m_dockEffectControls, m_dockLumetri, m_dockMixer, m_dockScopes}) {
+        addDockWidget(Qt::TopDockWidgetArea, d);
+        d->show();
+        tabifyDockWidget(m_dockSource, d);
+    }
+    // Lower row: Project group | Tools | Timeline | Meters.
+    addDockWidget(Qt::BottomDockWidgetArea, m_dockProject);
+    m_dockProject->show();
+    addDockWidget(Qt::BottomDockWidgetArea, m_dockTools);
+    m_dockTools->show();
+    splitDockWidget(m_dockProject, m_dockTools, Qt::Horizontal);
+    addDockWidget(Qt::BottomDockWidgetArea, m_dockTimeline);
+    m_dockTimeline->show();
+    splitDockWidget(m_dockTools, m_dockTimeline, Qt::Horizontal);
+    addDockWidget(Qt::BottomDockWidgetArea, m_dockMeters);
+    m_dockMeters->show();
+    splitDockWidget(m_dockTimeline, m_dockMeters, Qt::Horizontal);
+    for (DockPanel* d : {m_dockEffects, m_dockHistory, m_dockQueue}) {
+        addDockWidget(Qt::BottomDockWidgetArea, d);
+        d->show();
+        tabifyDockWidget(m_dockProject, d);
+    }
+    updateDockTitles();
+    m_dockSource->raise();
+    m_dockProject->raise();
+
+    const int total = std::max(800, width());
+    const int tall = std::max(520, height());
+    resizeDocks({m_dockSource, m_dockProgram}, {total * 2 / 5, total * 3 / 5}, Qt::Horizontal);
+    resizeDocks({m_dockProject, m_dockTools, m_dockTimeline, m_dockMeters},
+                {std::max(240, total * 22 / 100), 34, total * 66 / 100, 46}, Qt::Horizontal);
+    resizeDocks({m_dockSource, m_dockProject}, {tall * 54 / 100, tall * 46 / 100}, Qt::Vertical);
+}
+
+void MainWindow::saveCurrentWorkspace()
+{
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, tr("Save Workspace"), tr("Name for the current panel layout:"),
+                                               QLineEdit::Normal, QString(), &ok).trimmed();
+    if (!ok || name.isEmpty()) return;
+    QSettings s = appSettings();
+    s.setValue(QStringLiteral("workspaces/") + name, saveState(1));
+    showStatus(tr("Saved workspace \"%1\"").arg(name));
+}
+
+void MainWindow::rebuildWorkspaceMenu(QMenu* menu)
+{
+    menu->clear();
+    const QStringList names = {tr("Editing"), tr("Assembly"), tr("Color"), tr("Effects"), tr("Audio")};
+    for (int i = 0; i < names.size(); ++i) {
+        QAction* a = menu->addAction(names[i], this, [this, i] { applyWorkspace(i); });
+        a->setShortcut(QKeySequence(QStringLiteral("Alt+Shift+%1").arg(i + 1)));
+    }
+    QSettings s = appSettings();
+    s.beginGroup(QStringLiteral("workspaces"));
+    const QStringList custom = s.childKeys();
+    s.endGroup();
+    if (!custom.isEmpty()) menu->addSeparator();
+    for (const QString& name : custom) {
+        menu->addAction(name, this, [this, name] {
+            if (m_maximized) toggleMaximize(m_maximized);
+            const QByteArray state = appSettings().value(QStringLiteral("workspaces/") + name).toByteArray();
+            if (!restoreState(state, 1)) showStatus(tr("That workspace could not be restored"));
+        });
+    }
+    menu->addSeparator();
+    menu->addAction(tr("Save Current Layout as Workspace..."), this, &MainWindow::saveCurrentWorkspace);
+    if (!custom.isEmpty()) {
+        QMenu* del = menu->addMenu(tr("Delete Workspace"));
+        for (const QString& name : custom)
+            del->addAction(name, this, [name] { appSettings().remove(QStringLiteral("workspaces/") + name); });
+    }
+    menu->addSeparator();
+    menu->addAction(tr("Reset to Default Layout"), this, [this] { applyWorkspace(0); });
+}
+
+QString MainWindow::recoveryPath()
+{
+    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/recovery/untitled.bcproj");
+}
+
+void MainWindow::reportPreviousCrash(const QString& reportPath)
+{
+    const QString recovery = recoveryPath();
+    if (QFileInfo::exists(recovery) && m_currentFile.isEmpty() && !m_document->isDirty()) {
+        if (QMessageBox::question(this, tr("Recover unsaved project"),
+                                  tr("Breefer Composer closed unexpectedly while you were working on a project that had not been "
+                                     "saved yet (auto-saved %1). Open that recovered copy?")
+                                      .arg(QFileInfo(recovery).lastModified().toString()))
+            == QMessageBox::Yes) {
+            QString error;
+            if (m_document->load(recovery, &error)) {
+                m_document->markMetaDirty();
+                refreshTitle();
+                showStatus(tr("Recovered the unsaved project. Use File > Save As to keep it."));
+            } else {
+                QMessageBox::warning(this, tr("Cannot recover"), error);
+            }
+        }
+    }
+    const QString detail = reportPath.isEmpty() ? QString()
+        : tr("\n\nA crash report was saved here:\n%1").arg(QDir::toNativeSeparators(reportPath));
+    QMessageBox::information(this, tr("Breefer Composer closed unexpectedly"),
+                             tr("The last session did not exit cleanly. Your project is protected by auto-save: "
+                                "open it again and choose Recover if it offers a newer copy.%1\n\n"
+                                "If it keeps happening, try Edit > Preferences > Low-end mode, and please attach the "
+                                "report to a bug report.").arg(detail));
 }
 
 void MainWindow::setPlaybackDivisor(int divisor)
@@ -591,8 +754,8 @@ void MainWindow::buildActions()
     }
     action(tr("Type Tool"), QKeySequence(Qt::Key_T), [this] { newTitle(); });
     action(tr("Maximize Frame Under Cursor"), QKeySequence(Qt::Key_QuoteLeft), [this] {
-        PanelFrame* f = m_maximized ? m_maximized : frameUnderCursor();
-        toggleMaximize(f ? f : m_timelineFrame);
+        DockPanel* d = m_maximized ? m_maximized : dockUnderCursor();
+        toggleMaximize(d ? d : m_dockTimeline);
     });
 
     m_snapAction = new QAction(tr("Snap in Timeline"), this);
@@ -769,18 +932,11 @@ void MainWindow::buildMenus()
     // -------------------------------------------------------------- Window
     QMenu* window = menuBar()->addMenu(tr("&Window"));
     QMenu* workspaces = window->addMenu(tr("Workspaces"));
-    const QStringList names = {tr("Editing"), tr("Assembly"), tr("Color"), tr("Effects"), tr("Audio")};
-    for (int i = 0; i < names.size(); ++i)
-        action(names[i], QKeySequence(QStringLiteral("Alt+Shift+%1").arg(i + 1)), [this, i] {
-            applyWorkspace(i);
-        }, workspaces);
-    action(tr("Reset Layout"), {}, [this] {
-        if (m_maximized) toggleMaximize(m_maximized);
-        m_topSplit->setSizes({560, 780});
-        m_bottomSplit->setSizes({300, 34, 960, 46});
-        m_vSplit->setSizes({390, 320});
-        applyWorkspace(0);
-    }, workspaces);
+    connect(workspaces, &QMenu::aboutToShow, this, [this, workspaces] { rebuildWorkspaceMenu(workspaces); });
+    QAction* lock = window->addAction(tr("Lock Panel Layout"));
+    lock->setCheckable(true);
+    lock->setChecked(appSettings().value(QStringLiteral("panelsLocked"), false).toBool());
+    connect(lock, &QAction::toggled, this, [this](bool on) { setPanelsLocked(on); });
     window->addSeparator();
     const QList<QPair<QString, QWidget*>> panels = {
         {tr("Project"), m_mediaBin}, {tr("Effects"), m_effects}, {tr("History"), m_history},
@@ -792,7 +948,9 @@ void MainWindow::buildMenus()
         QWidget* w = p.second;
         action(p.first, {}, [this, w] { raisePanel(w); }, window);
     }
-    action(tr("Timeline"), {}, [this] { if (m_maximized) toggleMaximize(m_maximized); m_timeline->setFocus(); }, window);
+    action(tr("Timeline"), {}, [this] { if (m_maximized) toggleMaximize(m_maximized); m_dockTimeline->show(); m_dockTimeline->raise(); m_timeline->setFocus(); }, window);
+    action(tr("Tools"), {}, [this] { m_dockTools->show(); m_dockTools->raise(); }, window);
+    action(tr("Audio Meters"), {}, [this] { m_dockMeters->show(); m_dockMeters->raise(); }, window);
     window->addSeparator();
     QMenu* scopeMenu = window->addMenu(tr("Scope Mode"));
     action(tr("Waveform (Luma)"), {}, [this] { m_scopes->setMode(0); raisePanel(m_scopes); }, scopeMenu);
@@ -802,6 +960,7 @@ void MainWindow::buildMenus()
     // ---------------------------------------------------------------- Help
     QMenu* help = menuBar()->addMenu(tr("&Help"));
     action(tr("&Keyboard Shortcuts"), QKeySequence(Qt::Key_F1), [this] { ShortcutsDialog(this).exec(); }, help);
+    action(tr("&System Information..."), {}, [this] { showSystemInfo(); }, help);
     action(tr("&About Breefer Composer"), {}, [this] {
         QMessageBox::about(this, tr("Breefer Composer"),
                            tr("<h3>Breefer Composer %1</h3>"
@@ -822,18 +981,24 @@ void MainWindow::buildToolbar()
 
 void MainWindow::applyWorkspace(int index)
 {
-    // 0 Editing, 1 Assembly, 2 Color, 3 Effects, 4 Audio
+    // 0 Editing, 1 Assembly, 2 Color, 3 Effects, 4 Audio. Every workspace starts from the stock
+    // arrangement so switching is predictable, then emphasises its own panels.
     if (m_maximized) toggleMaximize(m_maximized);
-    const int total = std::max(800, m_topSplit->width());
+    applyDefaultLayout();
+    const int total = std::max(800, width());
     switch (index) {
     case 1:   // Assembly: big Project panel
         raisePanel(m_mediaBin);
+        resizeDocks({m_dockProject, m_dockTools, m_dockTimeline, m_dockMeters},
+                    {total / 2, 34, total / 2 - 90, 46}, Qt::Horizontal);
         m_mediaBin->setFocus();
-        m_bottomSplit->setSizes({std::max(420, total / 2), 34, total / 2, 46});
         break;
-    case 2:   // Color
+    case 2:   // Color: Lumetri beside the scopes, large Program monitor
+        splitDockWidget(m_dockLumetri, m_dockScopes, Qt::Horizontal);
+        m_dockScopes->show();
         raisePanel(m_lumetri);
-        raisePanel(m_scopes == nullptr ? m_lumetri : m_lumetri);
+        resizeDocks({m_dockLumetri, m_dockScopes, m_dockProgram},
+                    {total * 22 / 100, total * 22 / 100, total * 56 / 100}, Qt::Horizontal);
         break;
     case 3:   // Effects
         raisePanel(m_effectControls);
@@ -845,10 +1010,10 @@ void MainWindow::applyWorkspace(int index)
     default:  // Editing
         raisePanel(m_sourceMonitor);
         raisePanel(m_mediaBin);
-        m_bottomSplit->setSizes({300, 34, std::max(400, total - 380), 46});
         break;
     }
-    showStatus(tr("Workspace: %1").arg(QStringList{tr("Editing"), tr("Assembly"), tr("Color"), tr("Effects"), tr("Audio")}.value(index)));
+    showStatus(tr("Workspace: %1")
+                   .arg(QStringList{tr("Editing"), tr("Assembly"), tr("Color"), tr("Effects"), tr("Audio")}.value(index)));
 }
 
 // ----------------------------------------------------------------------- wire
@@ -1099,6 +1264,7 @@ void MainWindow::syncEngineSources()
     if (!m_useProxies)
         for (auto& ref : media) ref.proxyPath.clear();
 
+    if (seq.width > 0 && seq.height > 0) m_programMonitor->setFrameSize(QSize(seq.width, seq.height));
     m_programEngine->setSource(seq, media, m_document->project().sequences);
     m_audio->setSource(seq, media, m_document->project().sequences);
     if (m_loop) setLoop(true);
@@ -1128,7 +1294,7 @@ void MainWindow::refreshSequenceCombo()
         m_sequenceTabs->setTabData(i, s.id);
         if (s.id == m_document->sequenceId()) m_sequenceTabs->setCurrentIndex(i);
     }
-    if (const Sequence* s = m_document->sequence()) m_programTabs->setTabText(0, tr("Program: %1").arg(s->name));
+    if (const Sequence* s = m_document->sequence()) m_dockProgram->setTitle(tr("Program: %1").arg(s->name));
 }
 
 void MainWindow::autoQueueProxies()
@@ -1658,6 +1824,49 @@ void MainWindow::showPluginManager()
     dialog.exec();
 }
 
+// Keeps the editor inside the RAM that is really free: the frame cache follows the available memory,
+// and when the system runs short the caches are dropped so Windows/Linux/macOS never has to swap
+// the editor (or kill it) in the middle of an edit.
+void MainWindow::governMemory()
+{
+    const sys::Memory mem = sys::memory();
+    if (mem.totalMB <= 0) return;
+    const int budget = sys::suggestedCacheKB(m_lowEnd);
+    if (m_lastCacheBudgetKB == 0 || std::abs(budget - m_lastCacheBudgetKB) > m_lastCacheBudgetKB / 4) {
+        m_lastCacheBudgetKB = budget;
+        m_programEngine->setCacheBudgetKB(budget);
+        m_sourceEngine->setCacheBudgetKB(std::max(32 * 1024, budget / 3));
+    }
+    const qint64 critical = std::max<qint64>(256, mem.totalMB / 14);
+    if (mem.availableMB > 0 && mem.availableMB < critical) {
+        m_programEngine->trimCaches();
+        m_sourceEngine->trimCaches();
+        if (!m_lowMemoryNoted) {
+            m_lowMemoryNoted = true;
+            crash::log(QStringLiteral("low memory: %1 MB available, caches trimmed").arg(mem.availableMB));
+            showStatus(tr("Memory is low (%1 MB free): preview caches were released. Closing other apps or turning on "
+                          "Low-end mode (Edit > Preferences) will help.").arg(mem.availableMB));
+        }
+    } else if (mem.availableMB > critical * 2) {
+        m_lowMemoryNoted = false;
+    }
+}
+
+void MainWindow::showSystemInfo()
+{
+    QMessageBox box(this);
+    box.setWindowTitle(tr("System Information"));
+    box.setText(tr("<b>Breefer Composer %1</b>").arg(QApplication::applicationVersion()));
+    box.setInformativeText(sys::report().toHtmlEscaped().replace(QLatin1Char('\n'), QStringLiteral("<br>")));
+    box.setTextFormat(Qt::RichText);
+    QPushButton* copy = box.addButton(tr("Copy"), QMessageBox::ActionRole);
+    QPushButton* logs = box.addButton(tr("Open Log Folder"), QMessageBox::ActionRole);
+    box.addButton(QMessageBox::Close);
+    box.exec();
+    if (box.clickedButton() == copy) QApplication::clipboard()->setText(sys::report());
+    else if (box.clickedButton() == logs) QDesktopServices::openUrl(QUrl::fromLocalFile(crash::logDirectory()));
+}
+
 void MainWindow::applyLowEndMode(bool on)
 {
     m_lowEnd = on;
@@ -1812,7 +2021,7 @@ void MainWindow::setSourceMedia(const QString& mediaId, Tick at)
 
     m_sourceMonitor->setDragMediaId(mediaId);
     m_sourceMonitor->setFrameSize(QSize(source.width, source.height));
-    m_upperLeft->setTabText(m_upperLeft->indexOf(m_sourceMonitor), tr("Source: %1").arg(media->name));
+    m_dockSource->setTitle(tr("Source: %1").arg(media->name));
     raisePanel(m_sourceMonitor);
     m_sourceMonitor->setDuration(duration);
     m_sourceMonitor->setDurationText(formatTimecode(duration, source.rate));
@@ -2105,11 +2314,10 @@ void MainWindow::closeEvent(QCloseEvent* event)
     }
     QSettings settings = appSettings();
     if (m_maximized) toggleMaximize(m_maximized);
-    settings.setValue(QStringLiteral("geometry.v4"), saveGeometry());
-    settings.setValue(QStringLiteral("split.v"), m_vSplit->saveState());
-    settings.setValue(QStringLiteral("split.top"), m_topSplit->saveState());
-    settings.setValue(QStringLiteral("split.bottom"), m_bottomSplit->saveState());
+    settings.setValue(QStringLiteral("geometry.v5"), saveGeometry());
+    settings.setValue(QStringLiteral("dockState.v1"), saveState(1));
     if (!m_currentFile.isEmpty()) QFile::remove(m_currentFile + QStringLiteral(".autosave"));
+    else QFile::remove(recoveryPath());   // a clean exit means nothing is left to recover
     if (m_audio) m_audio->shutdown();
     event->accept();
 }

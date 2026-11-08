@@ -3,6 +3,7 @@
 #include "ui/Theme.h"
 
 #include <QHBoxLayout>
+#include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
 #include <QMouseEvent>
@@ -75,6 +76,71 @@ void PanelTabs::raisePanel(QWidget* widget)
 {
     const int i = indexOf(widget);
     if (i >= 0) setCurrentIndex(i);
+}
+
+// ----------------------------------------------------------------- DockPanel
+
+DockPanel::DockPanel(const QString& id, const QString& title, QWidget* content, QWidget* parent)
+    : QDockWidget(title, parent)
+    , m_content(content)
+{
+    setObjectName(id);   // required by QMainWindow::saveState
+    m_frame = new PanelFrame(content, this);
+    setWidget(m_frame);
+    setFeatures(DockWidgetClosable | DockWidgetMovable | DockWidgetFloatable);
+    setAllowedAreas(Qt::AllDockWidgetAreas);
+
+    m_titleBar = new QWidget(this);
+    m_titleBar->setObjectName(QStringLiteral("DockTitle"));
+    auto* row = new QHBoxLayout(m_titleBar);
+    row->setContentsMargins(0, 0, 2, 0);
+    row->setSpacing(0);
+    m_titleLabel = new QLabel(title, m_titleBar);
+    m_titleLabel->setObjectName(QStringLiteral("PanelTitle"));
+    m_titleLabel->setAttribute(Qt::WA_TransparentForMouseEvents, true);   // drag the whole bar
+    row->addWidget(m_titleLabel, 1);
+
+    m_menuButton = iconButton(icons::Id::Hamburger, tr("Panel menu"), m_titleBar, false, 16);
+    m_menuButton->setPopupMode(QToolButton::InstantPopup);
+    auto* menu = new QMenu(m_menuButton);
+    m_menuButton->setMenu(menu);
+    connect(menu, &QMenu::aboutToShow, this, [this, menu] {
+        menu->clear();
+        if (m_provider) m_provider(menu);
+        if (!menu->isEmpty()) menu->addSeparator();
+        menu->addAction(tr("Maximize Frame  (`)"), this, &DockPanel::maximizeRequested);
+        menu->addAction(isFloating() ? tr("Dock Panel") : tr("Undock Panel (float / second monitor)"), this,
+                        [this] { setFloating(!isFloating()); });
+        menu->addAction(tr("Close Panel"), this, &QWidget::close);
+    });
+    row->addWidget(m_menuButton);
+    setTitleBarWidget(m_titleBar);
+    connect(this, &QDockWidget::windowTitleChanged, m_titleLabel, &QLabel::setText);
+}
+
+void DockPanel::setCompact(bool compact)
+{
+    m_compact = compact;
+    m_titleLabel->setVisible(!compact && !m_tabbed);
+    m_menuButton->setVisible(!compact);
+    m_titleBar->setFixedHeight(compact ? 7 : QWIDGETSIZE_MAX);
+    m_titleBar->setMinimumHeight(compact ? 7 : 0);
+    m_titleBar->setToolTip(compact ? windowTitle() + tr(" - drag this strip to move the panel") : QString());
+    m_titleBar->setProperty("compact", compact);
+    m_titleBar->style()->unpolish(m_titleBar);
+    m_titleBar->style()->polish(m_titleBar);
+}
+
+void DockPanel::setTabbed(bool tabbed)
+{
+    if (m_tabbed == tabbed) return;
+    m_tabbed = tabbed;
+    if (!m_compact) m_titleLabel->setVisible(!tabbed);
+}
+
+void DockPanel::setTitle(const QString& title)
+{
+    setWindowTitle(title);
 }
 
 // ---------------------------------------------------------------- iconButton

@@ -100,7 +100,7 @@ MonitorWidget::MonitorWidget(Role role, QWidget* parent)
     : QWidget(parent)
     , m_role(role)
 {
-    setMinimumSize(240, 160);
+    setMinimumSize(140, 90);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setAttribute(Qt::WA_OpaquePaintEvent, true);
     buildUi();
@@ -257,6 +257,7 @@ void MonitorWidget::setInfoText(const QString& text)
 
 void MonitorWidget::setPlaying(bool playing)
 {
+    if (m_playing == playing) return;
     m_playing = playing;
     m_playButton->setIcon(icons::icon(playing ? icons::Id::Stop : icons::Id::Play));
     if (!playing) {
@@ -272,16 +273,24 @@ void MonitorWidget::setMarkers(const QVector<Tick>& markers) { m_scrub->setMarke
 
 QRect MonitorWidget::canvasRect() const
 {
-    return QRect(0, 0, width(), std::max(10, height() - m_controls->sizeHint().height()));
+    // Use the controls' real geometry, not their size hint: hidden or squeezed controls on a
+    // small window must not leave the picture overlapping them.
+    const int controlsTop = m_controls->isVisible() ? m_controls->y() : height();
+    return QRect(0, 0, width(), std::max(8, std::min(height(), controlsTop)));
 }
 
 QRect MonitorWidget::pictureRect() const
 {
-    const QRect canvas = canvasRect().adjusted(4, 4, -4, -4);
+    QRect canvas = canvasRect().adjusted(4, 4, -4, -4);
+    if (canvas.width() < 4 || canvas.height() < 4) canvas = canvasRect();
     const QSize source = m_image.isNull() ? m_frameSize : m_image.size();
     QSize target;
     if (m_zoomFactor <= 0.0) {
-        target = (m_frameSize.isValid() ? m_frameSize : source).scaled(canvas.size(), Qt::KeepAspectRatio);
+        // Fit: follow the picture's own aspect (works for 9:16, 1:1, 4:3 ... without a size hint).
+        const QSize basis = (!m_image.isNull() && m_image.width() > 0 && m_image.height() > 0)
+            ? m_image.size() : (m_frameSize.isValid() ? m_frameSize : source);
+        target = basis.scaled(canvas.size(), Qt::KeepAspectRatio);
+        if (target.isEmpty()) target = QSize(std::max(1, canvas.width()), std::max(1, canvas.height()));
     } else {
         target = QSize(static_cast<int>(m_frameSize.width() * m_zoomFactor),
                        static_cast<int>(m_frameSize.height() * m_zoomFactor));
@@ -297,6 +306,12 @@ void MonitorWidget::resizeEvent(QResizeEvent* event)
     const bool roomy = width() >= 400;
     for (QWidget* w : m_secondary) w->setVisible(roomy);
     m_zoom->setVisible(width() >= 300);
+    // Short monitors (portrait docks, 768p laptops): drop the optional rows so the picture keeps the room.
+    const bool tall = height() >= 230;
+    m_resolution->setVisible(tall && width() >= 260);
+    m_wrench->setVisible(tall);
+    m_duration->setVisible(width() >= 220);
+    m_scrub->setVisible(height() >= 120);
 }
 
 void MonitorWidget::mousePressEvent(QMouseEvent* event)

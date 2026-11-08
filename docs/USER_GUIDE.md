@@ -55,9 +55,16 @@ The Editing workspace mirrors Premiere Pro:
 └───────────────────────┴──┴──────────────────────────────────────────────────────┴─ter ┘
 ```
 
-- **Panel groups** have bold tab titles and a menu button (the three-line icon at the top
-  right of each group). Drag the dark gutters between groups to resize. The panel you last clicked gets a
-  blue outline.
+- **Every panel is a dock.** Drag a panel by its title bar (or the thin strip above Tools, the
+  Timeline and the meters) to move it: drop it on another panel to tab it there, on an edge to split
+  beside it, or outside the window to float it (also on a second monitor). Drag the dark gutters to
+  resize. Double-click a floating panel's title to put it back. The panel menu (three lines, top right
+  of each panel) has *Undock Panel*, *Close Panel* and *Maximize Frame*; closed panels come back from the
+  *Window* menu. The panel you last clicked gets a blue outline.
+- **Workspaces** (*Window › Workspaces*, `Alt+Shift+1…5`): Editing, Assembly, Color, Effects, Audio.
+  *Save Current Layout as Workspace…* stores your own arrangement under a name; *Lock Panel Layout* stops
+  accidental drags. Your layout is remembered between sessions; if a saved layout is ever damaged the
+  default one is restored automatically.
 - **Maximize** the panel under the cursor with `` ` `` (backtick) or by double-clicking its
   tab; press again to restore.
 - **Workspaces** (*Window › Workspaces*, `Alt+Shift+1…5`): Editing, Assembly (big Project
@@ -260,7 +267,11 @@ Open the **Lumetri Color** tab (or the Color workspace) with a video clip select
 
 - **Look** presets (Cinematic, Warm Film, Cool Noir, Black & White) set starting values.
 - **Basic Correction**: Exposure, Contrast, Highlights, Shadows, Whites, Blacks, Temperature,
-  Tint, Saturation, Vibrance — all keyframeable.
+  Tint, Saturation, Vibrance, Hue Shift and Faded Film — all keyframeable.
+- **Color Wheels** (as per-channel sliders): Shadows, Midtones and Highlights each have Red, Green and
+  Blue offsets (lift / gamma / gain). Push Shadows Blue and Highlights Red for the classic teal-and-orange
+  look. Grades keep a clip's transparency and run the same way in the preview, the exported file and the
+  exported `.cube`.
 - **Export .cube** saves the current grade as a 3D LUT (33³, Adobe/Resolve format) that you
   can load in Premiere, DaVinci Resolve, OBS and most editors. *(LUT import is not
   implemented yet.)*
@@ -359,6 +370,19 @@ timeline thumbnails off.
 - Transitions and stacked effects cost CPU: reduce Blur radius, avoid several 3D layers, and
   keep Lumetri neutral on clips you don't grade.
 - Put the cache folder on an SSD if you have one (Preferences).
+- **Memory governor.** Every 3 seconds the app compares its frame cache with the RAM that is really
+  free: the cache is sized to roughly a sixth of free memory (48 MB to 1 GB; at most 128 MB in low-end
+  mode), and if the system drops below about 7 % free RAM (never under 256 MB) the preview caches are
+  released immediately and the status bar says so. This is what keeps a 4 GB machine from swapping.
+- **Graphics cards.** The preview is composited on the CPU, so a missing, old or misbehaving GPU can
+  never break it. GPUs are used for hardware *decoding* (NVIDIA, AMD and Intel through D3D11VA, VA-API or
+  VideoToolbox) and hardware *encoding* on export (NVENC, AMD AMF, Intel Quick Sync, VideoToolbox, as
+  far as your FFmpeg build includes them). If the GPU decoder returns a bad frame the app switches to
+  software decoding by itself and reopens the clip. *Help › System Information* lists what was
+  detected on your machine.
+- **Portrait (9:16) and small screens.** The monitors follow the sequence's own aspect ratio, shrink
+  their controls on short panels, and dialogs are kept inside the screen. The window can be as small
+  as 800 × 520.
 - Memory is bounded: the Source and Program monitors each cache at most 256 MB of decoded
   frames (another 256 MB while exporting). Measured on Windows: about 90 MB idle and
   about 160 MB peak while playing a short 4K clip through its proxy; long timelines with many
@@ -382,6 +406,12 @@ clip doesn't match the sequence.
 | Remotion renders | `Remotion Renders/` next to the project |
 
 The window title shows `*` while there are unsaved changes; you are asked before closing.
+
+**Crash protection.** A project that has never been saved is auto-saved to the app's `recovery`
+folder; after an unexpected exit the next start offers it back. A crash also writes
+`crash-<date>.txt` and a running `session.log` into the `logs` folder (*Help › System Information ›
+Open Log Folder*) — please attach the newest crash report to a bug report. Errors raised while
+rendering a frame or exporting are caught and reported instead of closing the editor.
 
 ## 17. Troubleshooting
 

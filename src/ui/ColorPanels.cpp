@@ -172,6 +172,15 @@ void LumetriPanel::refresh()
     m_layout->addWidget(sectionLabel(tr("Creative"), m_content));
     addParamRow(m_layout, "saturation", tr("Saturation"), 0, 200, QString());
     addParamRow(m_layout, "vibrance", tr("Vibrance"), -100, 100, QString());
+    addParamRow(m_layout, "hue", tr("Hue Shift"), -180, 180, QString());
+    addParamRow(m_layout, "fade", tr("Faded Film"), 0, 100, QString());
+
+    m_layout->addWidget(sectionLabel(tr("Color Wheels"), m_content));
+    const struct { const char* id; const char* label; } wheels[] = {
+        {"lift.r", "Shadows R"}, {"lift.g", "Shadows G"}, {"lift.b", "Shadows B"},
+        {"gamma.r", "Midtones R"}, {"gamma.g", "Midtones G"}, {"gamma.b", "Midtones B"},
+        {"gain.r", "Highlights R"}, {"gain.g", "Highlights G"}, {"gain.b", "Highlights B"}};
+    for (const auto& w : wheels) addParamRow(m_layout, w.id, tr(w.label), -100, 100, QString());
 
     m_layout->addStretch(1);
 }

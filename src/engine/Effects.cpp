@@ -1,3 +1,5 @@
+#include <QThread>
+#include <thread>
 #include "engine/Effects.h"
 #include "engine/PluginHost.h"
 
@@ -67,6 +69,17 @@ EffectInstance makeLumetri()
                           makeParam("tint", "Tint", 0.0, -100, 100),
                           makeParam("saturation", "Saturation", 100.0, 0, 200),
                           makeParam("vibrance", "Vibrance", 0.0, -100, 100),
+                          makeParam("hue", "Hue Shift", 0.0, -180, 180),
+                          makeParam("fade", "Faded Film", 0.0, 0, 100),
+                          makeParam("lift.r", "Shadows Red", 0.0, -100, 100),
+                          makeParam("lift.g", "Shadows Green", 0.0, -100, 100),
+                          makeParam("lift.b", "Shadows Blue", 0.0, -100, 100),
+                          makeParam("gamma.r", "Midtones Red", 0.0, -100, 100),
+                          makeParam("gamma.g", "Midtones Green", 0.0, -100, 100),
+                          makeParam("gamma.b", "Midtones Blue", 0.0, -100, 100),
+                          makeParam("gain.r", "Highlights Red", 0.0, -100, 100),
+                          makeParam("gain.g", "Highlights Green", 0.0, -100, 100),
+                          makeParam("gain.b", "Highlights Blue", 0.0, -100, 100),
                       });
 }
 
@@ -252,8 +265,21 @@ bool hasMask(const Clip& clip)
     return false;
 }
 
+// Projects saved before the colour wheels existed carry a Lumetri effect without the new
+// parameters; add them (at their neutral values) so the panel and the renderer see a full set.
+static void upgradeLumetri(Clip& clip)
+{
+    for (auto& e : clip.effects) {
+        if (e.type != QLatin1String(kLumetri)) continue;
+        const EffectInstance full = makeLumetri();
+        for (const Param& p : full.params)
+            if (!e.param(p.id)) e.params.push_back(p);
+    }
+}
+
 void ensureIntrinsics(Clip& clip)
 {
+    upgradeLumetri(clip);
     bool motion = false;
     bool opacity = false;
     for (const auto& e : clip.effects) {
@@ -272,6 +298,7 @@ void ensureStandardStack(Clip& clip)
         return false;
     };
 
+    upgradeLumetri(clip);
     if (!has(kMotion)) clip.effects.push_back(makeMotion());
     if (!has(kOpacity)) clip.effects.push_back(makeOpacity());
     if (!has(kLumetri)) clip.effects.push_back(makeLumetri());
@@ -322,89 +349,159 @@ void applyColor(QImage& image, const Clip& clip, Tick localTime)
             break;
         }
     }
-    if (!hasColor) return;
+    if (!hasColor || image.isNull()) return;
 
-    const double exposure = paramValue(clip, kLumetri, "exposure", localTime, 0.0);
-    const double contrast = paramValue(clip, kLumetri, "contrast", localTime, 0.0) / 100.0;
-    const double highlights = paramValue(clip, kLumetri, "highlights", localTime, 0.0) / 100.0;
-    const double shadows = paramValue(clip, kLumetri, "shadows", localTime, 0.0) / 100.0;
-    const double whites = paramValue(clip, kLumetri, "whites", localTime, 0.0) / 100.0;
-    const double blacks = paramValue(clip, kLumetri, "blacks", localTime, 0.0) / 100.0;
-    const double temperature = paramValue(clip, kLumetri, "temperature", localTime, 0.0) / 100.0;
-    const double tint = paramValue(clip, kLumetri, "tint", localTime, 0.0) / 100.0;
-    const double saturation = paramValue(clip, kLumetri, "saturation", localTime, 100.0) / 100.0;
-    const double vibrance = paramValue(clip, kLumetri, "vibrance", localTime, 0.0) / 100.0;
+    auto value = [&](const char* id, double fallback) { return paramValue(clip, kLumetri, id, localTime, fallback); };
+    const double exposure = value("exposure", 0.0);
+    const double contrast = value("contrast", 0.0) / 100.0;
+    const double highlights = value("highlights", 0.0) / 100.0;
+    const double shadows = value("shadows", 0.0) / 100.0;
+    const double whites = value("whites", 0.0) / 100.0;
+    const double blacks = value("blacks", 0.0) / 100.0;
+    const double temperature = value("temperature", 0.0) / 100.0;
+    const double tint = value("tint", 0.0) / 100.0;
+    const double saturation = value("saturation", 100.0) / 100.0;
+    const double vibrance = value("vibrance", 0.0) / 100.0;
+    const double hueDegrees = value("hue", 0.0);
+    const double fade = value("fade", 0.0) / 100.0;
+    static const char* kLift[3] = {"lift.r", "lift.g", "lift.b"};
+    static const char* kGamma[3] = {"gamma.r", "gamma.g", "gamma.b"};
+    static const char* kGain[3] = {"gain.r", "gain.g", "gain.b"};
+    double lift[3], gamma[3], gain[3];
+    bool wheelsNeutral = true;
+    for (int k = 0; k < 3; ++k) {
+        const double l = value(kLift[k], 0.0), g = value(kGamma[k], 0.0), n = value(kGain[k], 0.0);
+        wheelsNeutral = wheelsNeutral && std::abs(l) < 1e-6 && std::abs(g) < 1e-6 && std::abs(n) < 1e-6;
+        lift[k] = l / 400.0;                      // +-0.25 black offset
+        gamma[k] = std::pow(2.0, g / 100.0);      // midtone power
+        gain[k] = 1.0 + n / 200.0;                // 0.5x .. 1.5x
+    }
 
-    const bool neutral = std::abs(exposure) < 1e-6 && std::abs(contrast) < 1e-6
-                         && std::abs(highlights) < 1e-6 && std::abs(shadows) < 1e-6
-                         && std::abs(whites) < 1e-6 && std::abs(blacks) < 1e-6
-                         && std::abs(temperature) < 1e-6 && std::abs(tint) < 1e-6
-                         && std::abs(saturation - 1.0) < 1e-6 && std::abs(vibrance) < 1e-6;
-    if (neutral) return;
+    const bool toneNeutral = std::abs(exposure) < 1e-6 && std::abs(contrast) < 1e-6 && std::abs(highlights) < 1e-6
+                             && std::abs(shadows) < 1e-6 && std::abs(whites) < 1e-6 && std::abs(blacks) < 1e-6
+                             && std::abs(temperature) < 1e-6 && std::abs(tint) < 1e-6 && std::abs(fade) < 1e-6
+                             && wheelsNeutral;
+    const bool matrixNeutral = std::abs(saturation - 1.0) < 1e-6 && std::abs(hueDegrees) < 1e-6;
+    const bool vibranceNeutral = std::abs(vibrance) < 1e-6;
+    if (toneNeutral && matrixNeutral && vibranceNeutral) return;
 
-    if (image.format() != QImage::Format_ARGB32)
-        image = image.convertToFormat(QImage::Format_ARGB32);
-
-    const double gain = std::pow(2.0, exposure);
-    const double contrastFactor = (contrast >= 0.0)
-                                      ? 1.0 + contrast * 1.6
-                                      : 1.0 + contrast * 0.75;
-    const double lift = blacks * 0.18;
+    // Everything that acts on one channel at a time is folded into three 256-entry tables, so the
+    // per-pixel cost is three lookups however many sliders are moved.
+    const double wb[3] = {(1.0 + temperature * 0.25) * (1.0 - tint * 0.08), 1.0 + tint * 0.16,
+                          (1.0 - temperature * 0.25) * (1.0 - tint * 0.08)};
+    const double gainExposure = std::pow(2.0, exposure);
+    const double contrastFactor = contrast >= 0.0 ? 1.0 + contrast * 1.6 : 1.0 + contrast * 0.75;
     const double whiteGain = 1.0 + whites * 0.35;
-    const double tempR = 1.0 + temperature * 0.25;
-    const double tempB = 1.0 - temperature * 0.25;
-    const double tintG = 1.0 + tint * 0.16;
-    const double tintRB = 1.0 - tint * 0.08;
+    const double blackLift = blacks * 0.18;
 
-    const int width = image.width();
-    const int height = image.height();
-
-    for (int y = 0; y < height; ++y) {
-        QRgb* line = reinterpret_cast<QRgb*>(image.scanLine(y));
-        for (int x = 0; x < width; ++x) {
-            const QRgb px = line[x];
-            double r = qRed(px) / 255.0;
-            double g = qGreen(px) / 255.0;
-            double b = qBlue(px) / 255.0;
-
-            r *= tempR * tintRB;
-            g *= tintG;
-            b *= tempB * tintRB;
-
-            r *= gain;
-            g *= gain;
-            b *= gain;
-
-            // Tone shaping: lift blacks, roll whites, then contrast around 0.5.
-            auto shape = [&](double v) {
-                v = v * whiteGain + lift;
-                const double shadowWeight = (1.0 - clamp01(v)) * (1.0 - clamp01(v));
-                const double highWeight = clamp01(v) * clamp01(v);
-                v += shadows * shadowWeight * 0.35;
-                v += highlights * highWeight * 0.35;
+    uint8_t table[3][256];
+    for (int k = 0; k < 3; ++k) {
+        for (int i = 0; i < 256; ++i) {
+            double v = i / 255.0;
+            if (!toneNeutral) {
+                v *= wb[k] * gainExposure;
+                v = std::max(0.0, v * gain[k] + lift[k]);
+                if (gamma[k] != 1.0) v = std::pow(v, 1.0 / gamma[k]);
+                v = v * whiteGain + blackLift;
+                const double c = clamp01(v);
+                v += shadows * (1.0 - c) * (1.0 - c) * 0.35;
+                v += highlights * c * c * 0.35;
                 v = (v - 0.5) * contrastFactor + 0.5;
-                return v;
-            };
-            r = shape(r);
-            g = shape(g);
-            b = shape(b);
-
-            const double luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-            double sat = saturation;
-            if (std::abs(vibrance) > 1e-6) {
-                const double currentSat = std::max(0.0, std::min(1.0,
-                    std::max({r, g, b}) - std::min({r, g, b})));
-                sat += vibrance * (1.0 - currentSat);
+                if (fade > 0.0) v = v * (1.0 - fade * 0.3) + fade * 0.12;
             }
-            r = luma + (r - luma) * sat;
-            g = luma + (g - luma) * sat;
-            b = luma + (b - luma) * sat;
-
-            line[x] = qRgb(static_cast<int>(clamp01(r) * 255.0 + 0.5),
-                           static_cast<int>(clamp01(g) * 255.0 + 0.5),
-                           static_cast<int>(clamp01(b) * 255.0 + 0.5));
+            table[k][i] = static_cast<uint8_t>(clamp01(v) * 255.0 + 0.5);
         }
     }
+
+    // Saturation and hue rotation are linear, so they share one 3x3 matrix (fixed point, 1/1024).
+    int m[9] = {1024, 0, 0, 0, 1024, 0, 0, 0, 1024};
+    if (!matrixNeutral) {
+        const double lr = 0.2126, lg = 0.7152, lb = 0.0722;
+        const double a = hueDegrees * 3.14159265358979323846 / 180.0;
+        const double cs = std::cos(a), sn = std::sin(a);
+        const double hue[9] = {lr + cs * (1 - lr) - sn * lr,        lg - cs * lg - sn * lg,           lb - cs * lb + sn * (1 - lb),
+                               lr - cs * lr + sn * 0.143,           lg + cs * (1 - lg) + sn * 0.140,  lb - cs * lb - sn * 0.283,
+                               lr - cs * lr - sn * (1 - lr),        lg - cs * lg + sn * lg,           lb + cs * (1 - lb) + sn * lb};
+        const double sat[9] = {lr + (1 - lr) * saturation, lg - lg * saturation,         lb - lb * saturation,
+                               lr - lr * saturation,       lg + (1 - lg) * saturation,   lb - lb * saturation,
+                               lr - lr * saturation,       lg - lg * saturation,         lb + (1 - lb) * saturation};
+        for (int r = 0; r < 3; ++r)
+            for (int c = 0; c < 3; ++c) {
+                double sum = 0.0;
+                for (int k = 0; k < 3; ++k) sum += sat[r * 3 + k] * hue[k * 3 + c];
+                m[r * 3 + c] = static_cast<int>(std::lround(sum * 1024.0));
+            }
+    }
+    const bool useMatrix = !matrixNeutral;
+    const bool useVibrance = !vibranceNeutral;
+    const int vibranceQ = static_cast<int>(std::lround(vibrance * 256.0));
+
+    const QImage::Format fmt = image.format();
+    if (fmt != QImage::Format_ARGB32 && fmt != QImage::Format_ARGB32_Premultiplied && fmt != QImage::Format_RGB32)
+        image = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    const bool premultiplied = image.format() == QImage::Format_ARGB32_Premultiplied;
+    image.detach();
+
+    auto clamp8 = [](int v) { return v < 0 ? 0 : (v > 255 ? 255 : v); };
+    auto processRows = [&](int y0, int y1) {
+        const int width = image.width();
+        for (int y = y0; y < y1; ++y) {
+            QRgb* line = reinterpret_cast<QRgb*>(image.scanLine(y));
+            for (int x = 0; x < width; ++x) {
+                const QRgb px = line[x];
+                const int a = qAlpha(px);
+                if (a == 0) continue;
+                int r = qRed(px), g = qGreen(px), b = qBlue(px);
+                const bool unpremultiply = premultiplied && a < 255;
+                if (unpremultiply) {
+                    r = std::min(255, r * 255 / a);
+                    g = std::min(255, g * 255 / a);
+                    b = std::min(255, b * 255 / a);
+                }
+                r = table[0][r];
+                g = table[1][g];
+                b = table[2][b];
+                if (useMatrix) {
+                    const int nr = (m[0] * r + m[1] * g + m[2] * b + 512) >> 10;
+                    const int ng = (m[3] * r + m[4] * g + m[5] * b + 512) >> 10;
+                    const int nb = (m[6] * r + m[7] * g + m[8] * b + 512) >> 10;
+                    r = clamp8(nr);
+                    g = clamp8(ng);
+                    b = clamp8(nb);
+                }
+                if (useVibrance) {
+                    // Boost muted colours more than vivid ones.
+                    const int hi = std::max({r, g, b}), lo = std::min({r, g, b});
+                    const int factor = 256 + vibranceQ * (255 - (hi - lo)) / 255;
+                    const int luma = (r * 54 + g * 183 + b * 19) >> 8;
+                    r = clamp8(luma + (((r - luma) * factor) >> 8));
+                    g = clamp8(luma + (((g - luma) * factor) >> 8));
+                    b = clamp8(luma + (((b - luma) * factor) >> 8));
+                }
+                if (unpremultiply) {
+                    r = r * a / 255;
+                    g = g * a / 255;
+                    b = b * a / 255;
+                }
+                line[x] = qRgba(r, g, b, a);
+            }
+        }
+    };
+
+    const int height = image.height();
+    const int cores = std::min(4, std::max(1, QThread::idealThreadCount() - 1));
+    if (cores <= 1 || static_cast<qint64>(image.width()) * height < 200000) {
+        processRows(0, height);
+        return;
+    }
+    std::vector<std::thread> workers;
+    const int band = (height + cores - 1) / cores;
+    for (int i = 1; i < cores; ++i) {
+        const int y0 = i * band, y1 = std::min(height, y0 + band);
+        if (y0 < y1) workers.emplace_back(processRows, y0, y1);
+    }
+    processRows(0, std::min(height, band));
+    for (auto& t : workers) t.join();
 }
 
 bool exportCube(const Clip& clip, Tick localTime, const QString& path, int size, QString* error)
