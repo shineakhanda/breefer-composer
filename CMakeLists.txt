@@ -164,20 +164,27 @@ endif()
 # ----------------------------------------------------------- sample plugins
 if(BREEFER_BUILD_SAMPLE_PLUGINS)
     add_library(breefer_stylize MODULE sdk/samples/stylize/stylize.c)
-    target_include_directories(breefer_stylize PRIVATE sdk/include)
-    set_target_properties(breefer_stylize PROPERTIES PREFIX "" C_VISIBILITY_PRESET hidden)
-    if(APPLE)
-        set_target_properties(breefer_stylize PROPERTIES
-            LIBRARY_OUTPUT_DIRECTORY "$<TARGET_BUNDLE_CONTENT_DIR:breefer>/MacOS/plugins")
-    else()
-        set_target_properties(breefer_stylize PROPERTIES
-            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins"
-            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")
-    endif()
-    if(NOT WIN32)
-        target_link_libraries(breefer_stylize PRIVATE m)
-    endif()
-    add_dependencies(breefer breefer_stylize)
+    add_library(breefer_tint MODULE sdk/samples/tint/tint.cpp)
+    foreach(plugin breefer_stylize breefer_tint)
+        target_include_directories(${plugin} PRIVATE sdk/include)
+        set_target_properties(${plugin} PROPERTIES PREFIX "" C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden
+                              AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+        if(APPLE)
+            set_target_properties(${plugin} PROPERTIES
+                LIBRARY_OUTPUT_DIRECTORY "$<TARGET_BUNDLE_CONTENT_DIR:breefer>/MacOS/plugins")
+        else()
+            set_target_properties(${plugin} PROPERTIES
+                LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins"
+                RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")
+        endif()
+        if(NOT WIN32)
+            target_link_libraries(${plugin} PRIVATE m)
+        endif()
+        if(MINGW)
+            target_link_options(${plugin} PRIVATE -static-libgcc -static-libstdc++)
+        endif()
+        add_dependencies(breefer ${plugin})
+    endforeach()
 endif()
 
 # ------------------------------------------------- Windows runtime staging
@@ -227,7 +234,7 @@ elseif(WIN32)
 else()
     install(TARGETS breefer RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
     if(BREEFER_BUILD_SAMPLE_PLUGINS)
-        install(TARGETS breefer_stylize LIBRARY DESTINATION ${CMAKE_INSTALL_BINDIR}/plugins)
+        install(TARGETS breefer_stylize breefer_tint LIBRARY DESTINATION ${CMAKE_INSTALL_BINDIR}/plugins)
     endif()
     install(FILES packaging/linux/org.breefer.Composer.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
     install(FILES packaging/linux/org.breefer.Composer.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)

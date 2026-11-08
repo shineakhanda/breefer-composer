@@ -3,6 +3,14 @@
 Breefer renders [Remotion](https://www.remotion.dev) compositions — video written in React —
 and places them on the timeline as clips with transparency.
 
+> **Verification status:** the bridge builds the command line from Remotion's documented CLI
+> (`npx remotion compositions|render|studio`, ProRes 4444 with alpha via
+> `--codec=prores --prores-profile=4444 --pixel-format=yuva444p10le --image-format=png`),
+> and the folder detection, props handling and import/re-render flow are implemented. A full
+> render against a real Remotion project has **not yet been run end-to-end** by the
+> maintainers (it needs an `npm install` of Remotion and a Chrome download). If it fails on your
+> machine, the Remotion error text is shown in a dialog; please open an issue with it.
+
 Requirements: **Node.js 18+** on `PATH`. The first render downloads Remotion's headless
 Chrome automatically.
 

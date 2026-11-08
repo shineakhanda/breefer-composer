@@ -11,7 +11,9 @@ static const BreeferParamDesc kPosterizeParams[] = {
     {"levels", "Levels", 2.0f, 32.0f, 6.0f},
 };
 static const BreeferParamDesc kSplitParams[] = {
-    {"offset", "Offset (px)", 0.0f, 60.0f, 8.0f},
+    /* Sizes are a percentage of the frame width, not pixels: the host renders previews
+     * at reduced resolution, and pixel units would look different at export. */
+    {"offset", "Offset (% of width)", 0.0f, 5.0f, 0.6f},
     {"angle", "Angle", -180.0f, 180.0f, 0.0f},
 };
 static const BreeferParamDesc kGrainParams[] = {
@@ -53,7 +55,8 @@ static void rgbSplit(BreeferImage* img, float offset, float angle)
     if (!copy) return;
     memcpy(copy, img->pixels, bytes);
     const double a = angle * 3.14159265358979 / 180.0;
-    const int dx = (int)lround(cos(a) * offset), dy = (int)lround(sin(a) * offset);
+    const double pixels = offset / 100.0 * img->width;
+    const int dx = (int)lround(cos(a) * pixels), dy = (int)lround(sin(a) * pixels);
     for (int y = 0; y < img->height; ++y) {
         unsigned char* p = img->pixels + (size_t)y * img->stride;
         for (int x = 0; x < img->width; ++x, p += 4) {

@@ -40,7 +40,7 @@ in the Effects panel with keyframeable parameters. See [docs/PLUGINS.md](docs/PL
 re-render after editing the React code; open Remotion Studio. See
 [docs/REMOTION.md](docs/REMOTION.md).
 
-**Premiere Pro projects** — import `.prproj` (sequences, tracks, clips, speed, media paths),
+**Premiere Pro projects** — best-effort `.prproj` import (sequences, tracks, clips, speed, media paths),
 plus OpenTimelineIO, FCP 7 XML and CMX 3600 EDL import/export.
 
 **Export** — H.264 / HEVC (NVENC, Quick Sync, AMF first, software fallback), ProRes 422,
@@ -54,10 +54,22 @@ i3/i5 2nd–4th gen: 1/4 playback, proxies above 720p, no timeline thumbnails.
 
 ---
 
+## Documentation
+
+| | |
+|---|---|
+| [User Guide](docs/USER_GUIDE.md) | the whole editor, start to finish |
+| [Keyboard Shortcuts](docs/SHORTCUTS.md) | every key and mouse modifier |
+| [How It Works](docs/HOW_IT_WORKS.md) | timeline model, edit engine, render/audio pipelines, threads |
+| [Plugin Guide](docs/PLUGINS.md) | write native effect plugins in C, C++ or Rust |
+| [Remotion & React](docs/REMOTION.md) | React compositions as clips |
+| [Premiere Pro Compatibility](docs/PREMIERE_COMPATIBILITY.md) | exactly which Premiere files, plugins and features work |
+| [File Formats](docs/FILE_FORMATS.md) | the `.bcproj` format and scripting |
+
 ## Download
 
 Pre-built packages are produced by GitHub Actions for every push and attached to each
-[release](../../releases): Windows installer/ZIP, Linux AppImage, macOS DMG (Apple Silicon).
+[release](https://github.com/breefer/breefer-composer/releases): Windows installer/ZIP, Linux AppImage, macOS DMG (Apple Silicon).
 
 ## Building from source
 

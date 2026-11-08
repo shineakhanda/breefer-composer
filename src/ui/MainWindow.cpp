@@ -73,21 +73,6 @@
 namespace bc {
 namespace {
 
-QWidget* wrapPanel(const QString& title, QWidget* inner)
-{
-    auto* panel = new QWidget;
-    auto* layout = new QVBoxLayout(panel);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(0);
-    auto* header = new QLabel(title, panel);
-    header->setStyleSheet(QStringLiteral(
-        "background: #2a2a2f; color: #d8d8dc; padding: 4px 8px;"
-        "font-weight: 600; border-bottom: 1px solid #3a3a40;"));
-    layout->addWidget(header);
-    layout->addWidget(inner, 1);
-    return panel;
-}
-
 QSettings appSettings() { return QSettings(QStringLiteral("Breefer"), QStringLiteral("Composer")); }
 
 } // namespace

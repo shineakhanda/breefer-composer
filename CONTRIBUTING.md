@@ -21,6 +21,12 @@ cmake --build build && ./build/breefer_tests
 
 All tests must pass. CI builds Windows, Linux and macOS on every pull request.
 
+## Documentation
+
+Docs live in `docs/`. Code samples in the docs should compile: `python tests/verify_plugin_doc.py
+<scratch dir>` builds the example plugin from `docs/PLUGINS.md` and writes a project you can
+render with `breefer --render-frame` and the `BREEFER_PLUGIN_PATH` variable.
+
 ## Style
 
 - C++20, Qt 6. 4-space indent, braces on the same line, `m_` members, `camelCase`.

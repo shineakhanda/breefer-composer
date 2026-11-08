@@ -4,9 +4,9 @@
  * Build a shared library (.dll / .so / .dylib) that exports the three
  * functions below and drop it into one of:
  *   <install dir>/plugins
- *   Windows: %APPDATA%/Breefer/Composer/plugins
- *   macOS:   ~/Library/Application Support/Breefer/Composer/plugins
- *   Linux:   ~/.local/share/Breefer/Composer/plugins
+ *   Windows: %APPDATA%/Breefer/Breefer Composer/plugins
+ *   macOS:   ~/Library/Application Support/Breefer/Breefer Composer/plugins
+ *   Linux:   ~/.local/share/Breefer/Breefer Composer/plugins
  *
  * Effects appear in the Effects panel under their category; parameters show in
  * Effect Controls with stopwatches and are keyframeable.
@@ -21,6 +21,8 @@
  */
 #ifndef BREEFER_PLUGIN_H
 #define BREEFER_PLUGIN_H
+
+#include <stddef.h> /* size_t, for pixel-offset arithmetic in plugins */
 
 #ifdef __cplusplus
 extern "C" {

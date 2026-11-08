@@ -4,6 +4,7 @@
 #include <QMutex>
 #include <QMutexLocker>
 #include <QSet>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QThread>
 #include <QWaitCondition>
@@ -20,13 +21,6 @@ extern "C" {
 
 namespace bc {
 namespace {
-
-QString ffError(int code)
-{
-    char buf[AV_ERROR_MAX_STRING_SIZE] = {0};
-    av_strerror(code, buf, sizeof(buf));
-    return QString::fromUtf8(buf);
-}
 
 } // namespace
 
@@ -297,8 +291,11 @@ ProxyManager::~ProxyManager()
 
 QString ProxyManager::proxyDirectory()
 {
-    const QString dir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation)
-                        + QStringLiteral("/proxies");
+    // Honour Preferences > Media cache folder, else the OS cache location.
+    QString base = QSettings(QStringLiteral("Breefer"), QStringLiteral("Composer"))
+                       .value(QStringLiteral("cacheDir")).toString();
+    if (base.isEmpty() || !QDir().mkpath(base)) base = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+    const QString dir = base + QStringLiteral("/proxies");
     QDir().mkpath(dir);
     return dir;
 }

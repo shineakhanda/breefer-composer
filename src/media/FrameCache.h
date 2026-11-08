@@ -16,7 +16,7 @@ inline QString frameKey(const QString& mediaId, qint64 frame, int w, int h)
 // Owned by the render thread: no locking, no sharing with the UI thread.
 class FrameCache {
 public:
-    explicit FrameCache(int budgetKB = 512 * 1024)
+    explicit FrameCache(int budgetKB = 256 * 1024)
         : m_cache(budgetKB)
     {
     }
